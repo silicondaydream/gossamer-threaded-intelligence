@@ -1,0 +1,1 @@
+"""Coordination strategies for swarm intelligence (flocking, consensus, etc.)."""
