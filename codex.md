@@ -105,15 +105,13 @@ gossamer-intelligence/
 
 # Steps to develop the project
 
-1. Examples & Demos
-   • Implement `run_task_allocation_demo.py`
-2. Documentation
+1. Documentation
    • Sphinx (docs/) or markdown pages
    • Code comments and usage guides
-3. CI & Quality
+2. CI & Quality
    • Pre-commit (black, isort, flake8)
    • GitHub Actions or equivalent for lint/test
-4. Future Enhancements
+3. Future Enhancements
    • Benchmark harness and performance profiling
    • Optional C++ extensions via pybind11 for hot loops
    • CLI or notebook integration for interactive experimentation

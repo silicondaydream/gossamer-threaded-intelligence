@@ -14,6 +14,7 @@ pip install -e .
 ## Structure
 
 - gossamer/: main package
+-   communication/: communication protocols (BaseProtocol, BroadcastProtocol, GossipProtocol)
 - examples/: demonstration scripts (run_flocking_demo.py, run_task_allocation_demo.py)
 - tests/: unit tests
 
