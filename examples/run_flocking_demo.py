@@ -5,6 +5,7 @@ Run a simple flocking (Boids) simulation demo.
 import numpy as np
 
 from gossamer.algorithms.coordination.flocking import flock_step
+from gossamer.utils.metrics import cohesion, alignment, separation
 
 
 def main():
@@ -21,7 +22,13 @@ def main():
     for step in range(steps):
         positions, velocities = flock_step(positions, velocities, dt)
         centroid = positions.mean(axis=0)
-        print(f"Step {step}: centroid at {centroid}")
+        coh = cohesion(positions)
+        order = alignment(velocities)
+        sep = separation(positions)
+        print(
+            f"Step {step}: centroid={centroid}, cohesion={coh:.3f}, "
+            f"alignment={order:.3f}, separation={sep:.3f}"
+        )
 
 
 if __name__ == "__main__":
