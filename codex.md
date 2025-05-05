@@ -105,16 +105,29 @@ gossamer-intelligence/
 
 # Steps to develop the project
 
-1. Documentation
-   • Sphinx (docs/) or markdown pages
-   • Code comments and usage guides
-2. CI & Quality
-   • Pre-commit (black, isort, flake8)
-   • GitHub Actions or equivalent for lint/test
-3. Future Enhancements
-   • Benchmark harness and performance profiling
-   • Optional C++ extensions via pybind11 for hot loops
-   • CLI or notebook integration for interactive experimentation
+        1. Documentation
+           • Scaffold a Sphinx site (under `docs/`) or equivalent Markdown pages
+           • Fill out architecture overviews, API reference (all modules: agents, algorithms, communication, decision_making,
+    environment, interfaces, utils)
+           • Flesh out usage guides and examples (e.g. update `examples/` with new perception & voting demos)
+           • Add doc-strings/inline docs where missing
+        2. CI & Quality
+           • Add a `.pre-commit-config.yaml` (black, isort, flake8, mypy) and run it locally & in CI
+           • Create a GitHub Actions (or similar) workflow to run lint, type-checks and pytest on every PR
+        3. Testing & Coverage
+           • Extend unit tests into integration tests (e.g. simulate a small swarm with perception+decision logic end-to-end)
+           • Add coverage reporting and enforce a minimal coverage threshold
+        4. Packaging & Release
+           • Finalize `setup.py` / `pyproject.toml` metadata (versioning, entry points if any)
+           • Publish to PyPI (or internal index) and test install in a clean venv
+        5. Integration Points
+           • Hook up `LeviathanInterface` against the real Leviathan engine—test agent injection, sensor/action loops
+           • Build out the Maneuver.Map backend (data exporter) & frontend pipelines
+           • Provide sample pipelines for live data streaming (CSV/JSON, WebSocket)
+        6. Future Enhancements
+           • Benchmark harness & profiling suite for hot loops (e.g. consensus, flocking)
+           • Optional C++ extensions (pybind11) for critical kernels
+           • A CLI or Jupyter-notebook interface for experimentation
 
 
 

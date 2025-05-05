@@ -33,3 +33,11 @@ def log(step, positions, velocities, metrics):
 sim = SwarmSimulator(n_agents=30, n_dims=2, dt=0.1)
 sim.run(50, callback=log)
 ```
+
+For full documentation, see the `docs/` directory:
+
+```bash
+cd docs
+pip install -r requirements.txt
+sphinx-build -b html source build/html
+```

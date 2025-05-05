@@ -3,4 +3,5 @@ networkx
 pandas
 scipy
 scikit-learn
+sphinx>=4.0
 pytest
