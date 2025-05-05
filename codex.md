@@ -103,6 +103,8 @@ gossamer-intelligence/
 
 
 
+# Steps to develop the project
+
 1. Project Initialization
            • Define packaging (setup.py/pyproject.toml)
            • Pin core dependencies (NumPy, NetworkX, Pandas, SciPy, scikit-learn) in requirements.txt
