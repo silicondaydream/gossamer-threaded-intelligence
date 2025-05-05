@@ -136,3 +136,23 @@ gossamer-intelligence/
            • Benchmark harness and performance profiling
            • Optional C++ extensions via pybind11 for hot loops
            • CLI or notebook integration for interactive experimentation
+
+
+
+
+## In-House Novel/Proprietary Tools
+
+1. **Leviathan Engine** SEPARATE REPO: A cutting-edge simulation framework designed to model and optimize the behaviors of massive swarms operating in distributed environments, from planetary surfaces to interstellar voids.
+2. **Gossamer Threaded Intelligence**: A proprietary algorithm suite for “threaded intelligence,” enabling seamless communication and decision-making across distributed autonomous agents.
+3. **Maneuver.Map** SEPARATE REPO: A real-time visualization and control platform for swarm dynamics, offering unprecedented insights into multi-agent interactions, energy efficiency, and emergent behavior patterns.
+
+
+### Key Integration Points:
+
+## Leviathan -> Gossamer: Leviathan will need a mechanism (likely via its Python bindings) to load and instantiate agent logic defined in the Gossamer library. The Gossamer agent code will interact with Leviathan through a defined API (exposed via bindings) to get sensor data, agent state, and execute actions (e.g., agent.sense(), agent.move()). This is handled by the gossamer/interfaces/leviathan_interface.py module.
+
+## Leviathan -> Maneuver.Map: Leviathan's data_logger module should output simulation state (agent positions, energy, status, etc.) in a structured format (e.g., CSV, JSON lines, Feather/Parquet for efficiency). Maneuver.Map's backend (data_processor.py) will read these files (or potentially connect to a live stream/database if needed later) and prepare the data for the frontend.
+
+## Maneuver.Map Backend <-> Frontend: The backend serves the frontend code and provides data via REST API endpoints and/or WebSockets for real-time updates.
+
+This structure provides modularity, leverages appropriate technologies for performance and ease of development, incorporates the needed extensions, and should be manageable for a small, capable team. Remember to start simple within each module and build out complexity as needed.
