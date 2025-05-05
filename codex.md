@@ -105,39 +105,18 @@ gossamer-intelligence/
 
 # Steps to develop the project
 
-1. Project Initialization
-           • Define packaging (setup.py/pyproject.toml)
-           • Pin core dependencies (NumPy, NetworkX, Pandas, SciPy, scikit-learn) in requirements.txt
-           • Add .gitignore, README.md and LICENSE
-        2. Package Structure
-           • Create top-level package `gossamer`
-           • Subpackages:
-             – agents/ (base_agent, simple_boid, task_oriented_agent, heterogeneous types)
-             – algorithms/ (coordination, optimization, navigation, resilience)
-             – communication/ (base_protocol, broadcast, gossip)
-             – decision_making/ (voting_mechanisms)
-             – environment/ (perception)
-             – interfaces/ (leviathan_interface)
-             – utils/ (metrics, other helpers)
-        3. Core Abstractions & Stubs
-           • `BaseAgent` class and a few agent stubs
-           • Shared protocol interface
-           • Metrics utilities for cohesion/order, etc.
-        4. Examples & Demos
-           • Simple runners in examples/ (flocking, task allocation)
-        5. Testing
-           • pytest setup
-           • Unit tests for core algorithms (e.g. test_flocking)
-        6. Documentation
-           • Sphinx (docs/) or markdown pages
-           • Code comments and usage guides
-        7. CI & Quality
-           • Pre-commit (black, isort, flake8)
-           • GitHub Actions or equivalent for lint/test
-        8. Future Enhancements
-           • Benchmark harness and performance profiling
-           • Optional C++ extensions via pybind11 for hot loops
-           • CLI or notebook integration for interactive experimentation
+1. Examples & Demos
+   • Implement `run_task_allocation_demo.py`
+2. Documentation
+   • Sphinx (docs/) or markdown pages
+   • Code comments and usage guides
+3. CI & Quality
+   • Pre-commit (black, isort, flake8)
+   • GitHub Actions or equivalent for lint/test
+4. Future Enhancements
+   • Benchmark harness and performance profiling
+   • Optional C++ extensions via pybind11 for hot loops
+   • CLI or notebook integration for interactive experimentation
 
 
 
