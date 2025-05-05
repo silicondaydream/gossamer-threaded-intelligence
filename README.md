@@ -14,7 +14,7 @@ pip install -e .
 ## Structure
 
 - gossamer/: main package
-- examples/: demonstration scripts
+- examples/: demonstration scripts (run_flocking_demo.py, run_task_allocation_demo.py)
 - tests/: unit tests
 
 ## Usage Example
