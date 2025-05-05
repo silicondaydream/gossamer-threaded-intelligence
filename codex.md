@@ -1,4 +1,10 @@
 
+# Arboria Research
+At Arboria Research, we specialize in the development and study of swarm intelligence, distributed systems, and their applications for micro and macro autonomous robotics. Our research explores the intricate dynamics of collective intelligence, aiming to design robust, scalable systems capable of executing complex tasks autonomously across interstellar scales. From theoretical frameworks to practical simulations, our work seeks to enable groundbreaking applications such as planetary-scale transformations, Dyson swarm harvesting, and resilient distributed networks for space exploration and habitation. With a multidisciplinary approach combining AI, robotics, and astrophysics, we aim to pioneer the future of intelligent systems and their role in humanity’s expansion into the cosmos.
+
+It all starts with Gossamer
+
+
 # Gossamer Threaded Intelligence
 
 Gossamer Threaded Intelligence is a suite of proprietary algorithms that facilitate “threaded intelligence,” enabling decentralized agents to share insights and coordinate decisions with minimal overhead.
