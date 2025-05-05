@@ -7,9 +7,15 @@ Contents:
 
 .. toctree::
    :maxdepth: 2
-   :caption: Modules:
+   :caption: API Reference:
 
    modules
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Examples:
+
+   examples
 
 Indices and tables
 ==================
