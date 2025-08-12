@@ -27,3 +27,8 @@ Roadmap
 - Numba/JIT fast paths and optional GPU prototypes
 - Richer metrics and experiment descriptors for publication‑grade analysis
 - Documentation site with API and end‑to‑end examples
+
+### Deploy via Google Cloud Console (UI)
+- Gossamer ships inside the Maneuver.Map orchestrator image; it is not deployed as a standalone service.
+- To update Gossamer in the cloud, rebuild the orchestrator image (Cloud Build → Builds → Run build, or trigger on main) and redeploy the Cloud Run service as described in the Maneuver.Map codex.
+- As an alternative, you can publish Gossamer to an internal PyPI and modify the orchestrator Dockerfile to install from there; then rebuild/redeploy via Console.
