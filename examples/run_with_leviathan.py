@@ -21,10 +21,11 @@ def main():
 
     # Import LeviathanEnv from leviathan-engine repo (expect PYTHONPATH set accordingly)
     try:
+        # Expect PYTHONPATH to include leviathan-engine/src/python
         from leviathan_env import LeviathanEnv
     except Exception as e:
         raise SystemExit(
-            "Failed to import LeviathanEnv. Ensure PYTHONPATH includes leviathan-engine/"
+            "Failed to import LeviathanEnv. Ensure PYTHONPATH includes leviathan-engine/src/python"
         ) from e
 
     cfg = None
@@ -53,4 +54,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
