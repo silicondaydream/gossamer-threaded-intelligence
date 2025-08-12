@@ -26,80 +26,12 @@ Machine Learning (Optional): scikit-learn, TensorFlow/PyTorch (If exploring ML-h
 Testing: pytest
 Packaging: setuptools (setup.py or pyproject.toml)
 
-gossamer-intelligence/
-├── .git/
-├── .gitignore
-├── README.md                # Overview, installation, usage examples
-├── LICENSE
-├── requirements.txt         # Core Python dependencies
-├── setup.py / pyproject.toml # Python package definition
-│
-├── gossamer/                # Main library source code (installable package)
-│   ├── __init__.py
-│   │
-│   ├── agents/              # Agent behavior definitions
-│   │   ├── __init__.py
-│   │   ├── base_agent.py    # Abstract base class for agents
-│   │   ├── simple_boid.py
-│   │   └── task_oriented_agent.py
-│   │   └── heterogeneous/   # -> Support for different agent types
-│   │       ├── __init__.py
-│   │       ├── micro_drone.py
-│   │       └── macro_bot.py
-│   │
-│   ├── algorithms/          # Core Swarm Intelligence algorithms
-│   │   ├── __init__.py
-│   │   ├── coordination/    # -> Coordination strategies
-│   │   │   ├── __init__.py
-│   │   │   ├── flocking.py
-│   │   │   ├── consensus.py
-│   │   │   └── task_allocation.py # (e.g., auction-based, market-based)
-│   │   ├── optimization/    # -> Optimization algorithms (PSO, ACO etc. if needed)
-│   │   │   └── /* ... */
-│   │   ├── navigation/      # -> Pathfinding, exploration
-│   │   │   ├── __init__.py
-│   │   │   └── potential_field.py
-│   │   └── resilience/      # -> Fault tolerance, self-reconfiguration logic
-│   │       ├── __init__.py
-│   │       └── self_healing_topology.py
-│   │
-│   ├── communication/       # Communication protocols and strategies
-│   │   ├── __init__.py
-│   │   ├── base_protocol.py
-│   │   ├── broadcast.py
-│   │   └── gossip.py
-│   │
-│   ├── decision_making/     # Distributed decision logic
-│   │   ├── __init__.py
-│   │   └── voting_mechanisms.py
-│   │
-│   ├── environment/         # Representations of environment perceived by agents
-│   │   ├── __init__.py
-│   │   └── perception.py    # How agents sense their surroundings
-│   │
-│   ├── interfaces/          # -> Adapters for different simulators
-│   │   ├── __init__.py
-│   │   └── leviathan_interface.py # Defines how Gossamer agents interact with Leviathan state/API
-│   │
-│   └── utils/               # Utility functions specific to Gossamer
-│       ├── __init__.py
-│       └── metrics.py       # Functions to calculate swarm metrics (order, cohesion etc.)
-│
-├── examples/                # Usage examples demonstrating algorithms
-│   ├── run_flocking_demo.py
-│   └── run_task_allocation_demo.py
-│
-├── tests/                   # Unit tests for algorithms and components
-│   ├── __init__.py
-│   ├── algorithms/
-│   │   └── test_flocking.py
-│   └── /* ... other test files ... */
-│
-├── docs/                    # Documentation
-│   ├── source/
-│   └── Makefile / make.bat
-│
-└── scripts/                 # Utility scripts
+
+## Tool-Specific Instructions and Best Practices
+
+*   **Leviathan Engine:** When creating new environmental modules, ensure they are modular and do not introduce dependencies that could affect other simulations. Document all new physics or environmental parameters clearly.
+*   **Gossamer Threaded Intelligence:** All new algorithms should be implemented as self-contained modules. Include unit tests for all new agent behaviors to ensure they function as expected before large-scale deployment.
+*   **Maneuver.Map:** When creating visualizations for publication, use the high-resolution output settings. Ensure all plots and videos are clearly labeled and include a scale or legend.
 
 
 
