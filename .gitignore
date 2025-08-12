@@ -12,3 +12,7 @@ venv/
 .vscode/
 .idea/
 codex.md
+docs/_build/
+*.coverage
+coverage.xml
+/.mypy_cache/
