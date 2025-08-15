@@ -1,6 +1,6 @@
 substitutions:
   _REGION: us-central1
-  _REPO: containers
+  _REPO: silicondaydream/gossamer-threaded-intelligence
   _NAME: gossamer-wheel
 options:
   logging: CLOUD_LOGGING_ONLY
