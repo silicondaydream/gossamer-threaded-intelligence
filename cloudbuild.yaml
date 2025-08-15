@@ -1,0 +1,39 @@
+substitutions:
+  _REGION: us-central1
+  _REPO: containers
+  _NAME: gossamer-wheel
+options:
+  logging: CLOUD_LOGGING_ONLY
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    id: Build image (wheel)
+    args:
+      - build
+      - -f
+      - Dockerfile.wheel
+      - -t
+      - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_NAME:latest'
+      - -t
+      - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_NAME:$SHORT_SHA'
+      - .
+  - name: 'gcr.io/cloud-builders/docker'
+    id: Push latest
+    args: ['push', '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_NAME:latest']
+  - name: 'gcr.io/cloud-builders/docker'
+    id: Push short SHA
+    args: ['push', '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_NAME:$SHORT_SHA']
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: Tag and push git tag (if present)
+    entrypoint: bash
+    args:
+      - -lc
+      - |
+        if [[ -n "${TAG_NAME:-}" ]]; then
+          docker tag $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_NAME:latest \
+                     $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_NAME:$TAG_NAME
+          docker push $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_NAME:$TAG_NAME
+        fi
+images:
+  - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_NAME:latest'
+  - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_NAME:$SHORT_SHA'
+
