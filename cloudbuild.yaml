@@ -1,7 +1,6 @@
 substitutions:
   _REGION: us-central1
   _REPO: arboria-framework
-  _NAME: gossamer-wheel
 options:
   logging: CLOUD_LOGGING_ONLY
 steps:
@@ -12,16 +11,16 @@ steps:
       - -f
       - Dockerfile.wheel
       - -t
-      - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_NAME:latest'
+      - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/gossamer-wheel:latest'
       - -t
-      - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_NAME:$SHORT_SHA'
+      - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/gossamer-wheel:$SHORT_SHA'
       - .
   - name: 'gcr.io/cloud-builders/docker'
     id: Push latest
-    args: ['push', '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_NAME:latest']
+    args: ['push', '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/gossamer-wheel:latest']
   - name: 'gcr.io/cloud-builders/docker'
     id: Push short SHA
-    args: ['push', '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_NAME:$SHORT_SHA']
+    args: ['push', '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/gossamer-wheel:$SHORT_SHA']
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: Tag and push git tag (if present)
     entrypoint: bash
@@ -29,11 +28,11 @@ steps:
       - -lc
       - |
         if [[ -n "${TAG_NAME:-}" ]]; then
-          docker tag $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_NAME:latest \
-                     $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_NAME:$TAG_NAME
-          docker push $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_NAME:$TAG_NAME
+          docker tag $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/gossamer-wheel:latest \
+                     $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/gossamer-wheel:$TAG_NAME
+          docker push $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/gossamer-wheel:$TAG_NAME
         fi
 images:
-  - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_NAME:latest'
-  - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_NAME:$SHORT_SHA'
+  - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/gossamer-wheel:latest'
+  - '$_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/gossamer-wheel:$SHORT_SHA'
 
