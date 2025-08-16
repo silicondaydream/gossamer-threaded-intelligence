@@ -1,12 +1,12 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="gossamer_intelligence",
+    name="gossamer-threaded-intelligence",  # Distribution name (unique in index)
     version="0.1.0",
     description="Gossamer Threaded Intelligence: decentralized agent algorithms for swarm intelligence",
     author="Arboria Research",
     license="MIT",
-    packages=find_packages(),
+    packages=find_packages(include=["gossamer", "gossamer.*"]),  # Import remains `gossamer`
     install_requires=[
         "numpy",
         "networkx",
@@ -14,7 +14,7 @@ setup(
         "scipy",
         "scikit-learn",
     ],
-    python_requires=">=3.7",
+    python_requires=">=3.8",
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",

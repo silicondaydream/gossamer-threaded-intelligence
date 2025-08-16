@@ -1,0 +1,42 @@
+substitutions:
+  _LOCATION: us-central1
+  _PY_REPO: python-packages
+options:
+  logging: CLOUD_LOGGING_ONLY
+steps:
+  - name: python:3.10-slim
+    id: Build wheel
+    entrypoint: bash
+    args:
+      - -lc
+      - |
+        set -euo pipefail
+        pip install --no-cache-dir --upgrade pip build
+        python -m build --wheel --outdir dist
+        ls -lah dist
+  - name: python:3.10-slim
+    id: Smoke test wheel (local)
+    entrypoint: bash
+    args:
+      - -lc
+      - |
+        set -euo pipefail
+        pip install --no-cache-dir dist/*.whl
+        python - <<'PY'
+import sys
+__import__('gossamer.algorithms.coordination.flocking')
+print('Import OK')
+PY
+  - name: python:3.10-slim
+    id: Upload to Artifact Registry Python repo
+    entrypoint: bash
+    env:
+      - TWINE_REPOSITORY_URL=https://$_LOCATION-python.pkg.dev/$PROJECT_ID/$_PY_REPO/
+    args:
+      - -lc
+      - |
+        set -euo pipefail
+        pip install --no-cache-dir twine keyrings.google-artifactregistry-auth
+        python -m twine upload --non-interactive dist/*
+images: []
+
