@@ -1,59 +1,62 @@
-# Gossamer Threaded Intelligence
+Gossamer Threaded Intelligence
+==============================
 
-Lightweight Python library of swarm intelligence algorithms and utilities that drive agent behavior inside the Leviathan Engine and visualize via Maneuver.Map. Use it standalone for algorithm prototyping, or plug it into Leviathan for high‑performance, multi‑agent simulations at scale.
+Overview
+Gossamer is a Python library of decentralized, multi‑agent algorithms and utilities used to compute agent actions per step in large‑scale simulations. It integrates with the Leviathan Engine (physics) and the Maneuver.Map orchestrator (experiments + visualization).
 
-## How It Fits With Leviathan + Maneuver.Map
+What’s new
+- Distributed as a versioned Python wheel in Artifact Registry (no source copying)
+- Stable import name: `gossamer` (distribution: `gossamer-threaded-intelligence`)
+- Cloud Build pipelines for build, smoke test, and publish
 
-- Gossamer: Implements agent decision logic (e.g., flocking, task allocation) and metrics.
-- Leviathan: High‑performance C++ simulator that executes actions from Gossamer and logs state.
-- Maneuver.Map: Orchestrates experiments, tunes parameters, stores data, and renders 3D visualizations.
+Install
+- From Artifact Registry (recommended):
+  - pip install keyrings.google-artifactregistry-auth
+  - pip install --extra-index-url https://us-central1-python.pkg.dev/arboria-research/python-packages/simple/ gossamer-threaded-intelligence==0.1.0
+- From source (dev):
+  - pip install -r requirements.txt
+  - pip install -e .
 
-## Features
+Core APIs
+- Flocking
+  - from gossamer.algorithms.coordination.flocking import flock_step
+  - new_pos, new_vel = flock_step(pos, vel, dt, alignment_weight=1.0, cohesion_weight=1.0, separation_weight=1.5, neighbor_radius=10.0, separation_distance=1.0, max_speed=5.0)
+- Metrics
+  - from gossamer.utils.metrics import cohesion, alignment, separation
 
-- Coordination algorithms: flocking, task allocation, consensus, navigation, resilience.
-- Metrics: cohesion, alignment, separation, and helpers for evaluation.
-- Interfaces: adapter to run Gossamer logic against Leviathan (`LeviathanInterface`).
-- Examples: quick demos and integration scripts.
-
-## Install
-
-```bash
-pip install -r requirements.txt
-pip install -e .
-```
-
-## Quick Start
-
-Standalone prototype:
+Example (per‑step action computation)
 ```python
-from gossamer.simulator import SwarmSimulator
+import numpy as np
+from gossamer.algorithms.coordination.flocking import flock_step
+from gossamer.utils.metrics import cohesion
 
-sim = SwarmSimulator(n_agents=30, dt=0.1)
-sim.run(50, callback=lambda s,p,v,m: print(s, m))
+dt = 0.1
+pos = np.random.randn(100, 3)
+vel = np.zeros_like(pos)
+
+for _ in range(100):
+    _, vel = flock_step(
+        pos, vel, dt,
+        alignment_weight=1.0, cohesion_weight=1.0, separation_weight=1.5,
+        neighbor_radius=10.0, separation_distance=1.0, max_speed=5.0,
+    )
+    pos = pos + vel * dt
+print('cohesion:', cohesion(pos))
 ```
 
-Run against Leviathan (Python bindings):
-```bash
-cd examples
-PYTHONPATH=../../leviathan-engine python run_with_leviathan.py --steps 200 \
-  --config ../../leviathan-engine/examples/simple_flock/minimal.cfg
-```
+Publishing a new version
+- Update version in setup.py
+- Push changes and trigger `cloudbuild.publish.yaml`
+  - Builds the wheel, smoke‑tests an import, uploads to the Artifact Registry Python repo
 
-## API Highlights
+Compatibility
+- Python >= 3.8; NumPy >= 1.24; Pandas 2.x
+- Designed to be invoked from FastAPI backends (e.g., Maneuver.Map) or scripts
 
-- `gossamer.algorithms.coordination.flocking.flock_step(positions, velocities, dt, ...) -> (new_pos, new_vel)`
-- `gossamer.utils.metrics.{cohesion, alignment, separation}`
-- `gossamer.interfaces.leviathan_interface.LeviathanInterface(env)` implements a sim‑like loop over a Leviathan environment with `reset/step/compute_metrics` methods.
+Roadmap
+- Additional coordination primitives (rendezvous, coverage)
+- GPU‑accelerated variants for large swarms
+- Benchmark suite and reproducible evaluations
 
-## Use Cases
-
-- Research and teach swarm behaviors with reproducible metrics.
-- Rapidly iterate on agent algorithms before scaling to millions of agents in Leviathan.
-- Plug into Maneuver.Map’s evolutionary tuner to find optimal parameters across generations.
-
-## Repo Structure
-
-- `gossamer/algorithms/*` algorithm modules
-- `gossamer/utils/metrics.py` evaluation metrics
-- `gossamer/interfaces/leviathan_interface.py` Leviathan adapter
-- `examples/` runnable demos
+Support
+- Open an issue with a minimal repro (inputs, parameters, expected vs actual)
