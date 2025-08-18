@@ -41,6 +41,7 @@ steps:
       - |
         set -euo pipefail
         pip install --no-cache-dir twine keyrings.google-artifactregistry-auth
-        python -m twine upload --non-interactive dist/*
+        # Skip re-uploading an existing version to avoid 400 errors
+        python -m twine upload --non-interactive --skip-existing dist/*
 
 images: []
