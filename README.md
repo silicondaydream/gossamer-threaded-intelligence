@@ -21,6 +21,7 @@ Core APIs
 - Flocking
   - from gossamer.algorithms.coordination.flocking import flock_step
   - new_pos, new_vel = flock_step(pos, vel, dt, alignment_weight=1.0, cohesion_weight=1.0, separation_weight=1.5, neighbor_radius=10.0, separation_distance=1.0, max_speed=5.0)
+  - Optional spatial hashing for large N: pass use_spatial=True (or adjust spatial_threshold)
 - Metrics
   - from gossamer.utils.metrics import cohesion, alignment, separation
 

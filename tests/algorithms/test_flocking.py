@@ -43,3 +43,22 @@ def test_invalid_shapes_raise():
     velocities = np.zeros((4, 2))
     with pytest.raises(ValueError):
         flock_step(positions, velocities, dt=0.1)
+
+
+def test_spatial_matches_naive_small():
+    rng = np.random.default_rng(0)
+    positions = rng.random((25, 3))
+    velocities = rng.random((25, 3))
+    params = dict(
+        dt=0.1,
+        alignment_weight=1.0,
+        cohesion_weight=1.0,
+        separation_weight=1.5,
+        neighbor_radius=0.5,
+        separation_distance=0.2,
+        max_speed=2.0,
+    )
+    new_pos_naive, new_vel_naive = flock_step(positions, velocities, use_spatial=False, **params)
+    new_pos_spatial, new_vel_spatial = flock_step(positions, velocities, use_spatial=True, **params)
+    assert np.allclose(new_pos_naive, new_pos_spatial, atol=1e-8)
+    assert np.allclose(new_vel_naive, new_vel_spatial, atol=1e-8)
