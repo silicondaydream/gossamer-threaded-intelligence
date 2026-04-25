@@ -2,9 +2,9 @@ from setuptools import setup, find_packages
 
 setup(
     name="gossamer-threaded-intelligence",  # Distribution name (unique in index)
-    version="0.1.0",
-    description="Gossamer Threaded Intelligence: decentralized agent algorithms for swarm intelligence",
-    author="Arboria Research",
+    version="0.2.0",
+    description="Gossamer Threaded Intelligence: swarm coordination algorithms, graph-based message-passing policies, information-theoretic + criticality metrics, a MARL toolkit, and the Arboria Swarm Benchmark.",
+    author="Arboria Labs",
     license="MIT",
     packages=find_packages(include=["gossamer", "gossamer.*"]),  # Import remains `gossamer`
     install_requires=[

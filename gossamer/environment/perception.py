@@ -1,9 +1,20 @@
 """
 Perception models for agents sensing their environment.
+
+Reproducibility: classes that introduce stochasticity (noise, packet loss,
+blind spots, stochastic delay) accept an ``rng`` argument that is either an
+``np.random.Generator``, an ``int`` seed, or ``None`` for a nondeterministic
+default. Use ``_resolve_rng(rng)`` to normalize.
 """
 from abc import ABC, abstractmethod
 import numpy as np
-from typing import NamedTuple, Optional
+from typing import NamedTuple, Optional, Union
+
+
+def _resolve_rng(rng: Optional[Union[int, np.random.Generator]]) -> np.random.Generator:
+    if isinstance(rng, np.random.Generator):
+        return rng
+    return np.random.default_rng(rng)
 
 
 class Observation(NamedTuple):
@@ -46,10 +57,12 @@ class PerfectPerception(BasePerception):
         noisy: bool = False,
         pos_noise: float = 0.0,
         vel_noise: float = 0.0,
+        rng: Optional[Union[int, np.random.Generator]] = None,
     ):
         self.noisy = noisy
         self.pos_noise = pos_noise
         self.vel_noise = vel_noise
+        self._rng = _resolve_rng(rng)
 
     def perceive(
         self,
@@ -63,12 +76,12 @@ class PerfectPerception(BasePerception):
         indices = indices[mask]
         pos = positions[indices].copy()
         if self.noisy and self.pos_noise > 0:
-            pos = pos + np.random.normal(scale=self.pos_noise, size=pos.shape)
+            pos = pos + self._rng.normal(scale=self.pos_noise, size=pos.shape)
         vel = None
         if velocities is not None:
             vel = velocities[indices].copy()
             if self.noisy and self.vel_noise > 0:
-                vel = vel + np.random.normal(scale=self.vel_noise, size=vel.shape)
+                vel = vel + self._rng.normal(scale=self.vel_noise, size=vel.shape)
         return Observation(indices=indices, positions=pos, velocities=vel)
 
 
@@ -83,11 +96,13 @@ class RangePerception(BasePerception):
         noisy: bool = False,
         pos_noise: float = 0.0,
         vel_noise: float = 0.0,
+        rng: Optional[Union[int, np.random.Generator]] = None,
     ):
         self.radius = radius
         self.noisy = noisy
         self.pos_noise = pos_noise
         self.vel_noise = vel_noise
+        self._rng = _resolve_rng(rng)
 
     def perceive(
         self,
@@ -104,12 +119,12 @@ class RangePerception(BasePerception):
         indices = all_indices[mask]
         pos = positions[indices].copy()
         if self.noisy and self.pos_noise > 0:
-            pos = pos + np.random.normal(scale=self.pos_noise, size=pos.shape)
+            pos = pos + self._rng.normal(scale=self.pos_noise, size=pos.shape)
         vel = None
         if velocities is not None:
             vel = velocities[indices].copy()
             if self.noisy and self.vel_noise > 0:
-                vel = vel + np.random.normal(scale=self.vel_noise, size=vel.shape)
+                vel = vel + self._rng.normal(scale=self.vel_noise, size=vel.shape)
         return Observation(indices=indices, positions=pos, velocities=vel)
  
 class FieldOfViewPerception(BasePerception):
@@ -125,12 +140,14 @@ class FieldOfViewPerception(BasePerception):
         noisy: bool = False,
         pos_noise: float = 0.0,
         vel_noise: float = 0.0,
+        rng: Optional[Union[int, np.random.Generator]] = None,
     ):
         self.radius = radius
         self.fov = fov
         self.noisy = noisy
         self.pos_noise = pos_noise
         self.vel_noise = vel_noise
+        self._rng = _resolve_rng(rng)
 
     def perceive(
         self,
@@ -173,12 +190,12 @@ class FieldOfViewPerception(BasePerception):
         # Positions of neighbors
         pos = positions[idxs].copy()
         if self.noisy and self.pos_noise > 0:
-            pos = pos + np.random.normal(scale=self.pos_noise, size=pos.shape)
+            pos = pos + self._rng.normal(scale=self.pos_noise, size=pos.shape)
         vel = None
         if velocities is not None:
             vel = velocities[idxs].copy()
             if self.noisy and self.vel_noise > 0:
-                vel = vel + np.random.normal(scale=self.vel_noise, size=vel.shape)
+                vel = vel + self._rng.normal(scale=self.vel_noise, size=vel.shape)
         return Observation(indices=idxs, positions=pos, velocities=vel)
 
 from collections import deque
@@ -207,9 +224,15 @@ class PacketLossPerception(BasePerception):
     """
     Perception wrapper that randomly drops perceived neighbors with a given probability.
     """
-    def __init__(self, base: BasePerception, loss_prob: float):
+    def __init__(
+        self,
+        base: BasePerception,
+        loss_prob: float,
+        rng: Optional[Union[int, np.random.Generator]] = None,
+    ):
         self.base = base
         self.loss_prob = loss_prob
+        self._rng = _resolve_rng(rng)
 
     def perceive(
         self,
@@ -222,8 +245,7 @@ class PacketLossPerception(BasePerception):
         if idxs.size == 0:
             return obs
         # Sample drop mask
-        keep_mask = np.random.rand(len(idxs)) >= self.loss_prob
-        kept = keep_mask.nonzero()[0]
+        keep_mask = self._rng.random(len(idxs)) >= self.loss_prob
         new_idxs = idxs[keep_mask]
         new_pos = obs.positions[keep_mask]
         new_vel = None
@@ -264,8 +286,6 @@ class BearingOnlyPerception(BasePerception):
         # Return angles as positions, drop velocities
         return Observation(indices=obs.indices, positions=angles, velocities=None)
 
-import random
-
 class IntermittentBlindSpotPerception(BasePerception):
     """
     Perception wrapper that intermittently creates a blind spot: with a given probability,
@@ -277,10 +297,12 @@ class IntermittentBlindSpotPerception(BasePerception):
         base: BasePerception,
         blind_width: float,
         prob_active: float,
+        rng: Optional[Union[int, np.random.Generator]] = None,
     ):
         self.base = base
         self.blind_width = blind_width
         self.prob_active = prob_active
+        self._rng = _resolve_rng(rng)
 
     def perceive(
         self,
@@ -291,7 +313,7 @@ class IntermittentBlindSpotPerception(BasePerception):
         obs = self.base.perceive(agent_index, positions, velocities)
         if obs.indices.size == 0:
             return obs
-        if random.random() >= self.prob_active:
+        if self._rng.random() >= self.prob_active:
             return obs
         # Determine agent heading
         if velocities is None:
@@ -303,7 +325,7 @@ class IntermittentBlindSpotPerception(BasePerception):
         else:
             heading_angle = 0.0
         # Sample blind spot center in [-pi, pi]
-        center = random.uniform(-np.pi, np.pi)
+        center = float(self._rng.uniform(-np.pi, np.pi))
         half = self.blind_width / 2.0
         # Compute relative angles
         rel = obs.positions - positions[agent_index]
@@ -331,11 +353,13 @@ class StochasticDelayPerception(BasePerception):
         base: BasePerception,
         max_delay_steps: int,
         delay_sampler=None,
+        rng: Optional[Union[int, np.random.Generator]] = None,
     ):
         self.base = base
         self.max_delay_steps = max_delay_steps
         self.delay_sampler = delay_sampler
         self.history = deque(maxlen=max_delay_steps + 1)
+        self._rng = _resolve_rng(rng)
 
     def perceive(
         self,
@@ -349,7 +373,7 @@ class StochasticDelayPerception(BasePerception):
         if self.delay_sampler is not None:
             d = self.delay_sampler()
         else:
-            d = random.randint(0, self.max_delay_steps)
+            d = int(self._rng.integers(0, self.max_delay_steps + 1))
         # Return observation from d steps ago (or earliest)
         if d < len(self.history):
             return self.history[-(d + 1)]

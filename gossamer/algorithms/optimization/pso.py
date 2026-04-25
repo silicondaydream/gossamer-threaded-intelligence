@@ -1,9 +1,21 @@
 """
 Particle Swarm Optimization (PSO) implementation.
 """
+from typing import Optional, Union
+
 import numpy as np
 
-def pso(objective, bounds, n_particles=30, max_iter=100, w=0.5, c1=1.5, c2=1.5):
+
+def pso(
+    objective,
+    bounds,
+    n_particles=30,
+    max_iter=100,
+    w=0.5,
+    c1=1.5,
+    c2=1.5,
+    rng: Optional[Union[int, np.random.Generator]] = None,
+):
     """
     Perform PSO to minimize the given objective function.
 
@@ -15,6 +27,8 @@ def pso(objective, bounds, n_particles=30, max_iter=100, w=0.5, c1=1.5, c2=1.5):
         w: inertia weight
         c1: cognitive weight
         c2: social weight
+        rng: ``np.random.Generator``, ``int`` seed, or ``None`` for a
+            nondeterministic default.
 
     Returns:
         best_pos: ndarray, best-found position
@@ -24,11 +38,12 @@ def pso(objective, bounds, n_particles=30, max_iter=100, w=0.5, c1=1.5, c2=1.5):
     if bounds.ndim != 2 or bounds.shape[1] != 2:
         raise ValueError("bounds must be a sequence of (min, max) pairs")
     d = bounds.shape[0]
+    gen = rng if isinstance(rng, np.random.Generator) else np.random.default_rng(rng)
 
     # Initialize particle positions and velocities
     lb = bounds[:, 0]
     ub = bounds[:, 1]
-    pos = lb + (ub - lb) * np.random.rand(n_particles, d)
+    pos = lb + (ub - lb) * gen.random((n_particles, d))
     vel = np.zeros((n_particles, d))
 
     # Personal bests
@@ -40,8 +55,8 @@ def pso(objective, bounds, n_particles=30, max_iter=100, w=0.5, c1=1.5, c2=1.5):
     gbest_val = pbest_val[gbest_idx]
 
     for _ in range(max_iter):
-        r1 = np.random.rand(n_particles, d)
-        r2 = np.random.rand(n_particles, d)
+        r1 = gen.random((n_particles, d))
+        r2 = gen.random((n_particles, d))
         # Update velocities
         vel = (
             w * vel

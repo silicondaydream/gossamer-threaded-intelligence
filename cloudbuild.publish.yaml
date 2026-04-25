@@ -26,8 +26,21 @@ steps:
         set -euo pipefail
         pip install --no-cache-dir dist/*.whl
         python - <<'PY'
-        import sys
-        __import__('gossamer.algorithms.coordination.flocking')
+        # Verify that the new Phase 2+ subpackages actually ship in the wheel.
+        # If any of these fails, find_packages() missed a subpackage (e.g.,
+        # a dir was added without __init__.py).
+        for mod in (
+            'gossamer.algorithms.coordination.flocking',
+            'gossamer.algorithms.coordination.flocking_gnn',
+            'gossamer.algorithms.coordination.consensus_gnn',
+            'gossamer.graph',
+            'gossamer.metrics.info',
+            'gossamer.metrics.criticality',
+            'gossamer.metrics.graph',
+            'gossamer.benchmarks',
+            'gossamer.utils.spatial',
+        ):
+            __import__(mod)
         print("✅ Import OK")
         PY
 

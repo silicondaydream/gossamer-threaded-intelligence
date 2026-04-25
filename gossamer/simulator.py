@@ -1,6 +1,8 @@
 """
 SwarmSimulator: orchestrates simulation of agent swarms using coordination algorithms.
 """
+from typing import Optional, Union
+
 import numpy as np
 
 from gossamer.algorithms.coordination.flocking import flock_step
@@ -23,6 +25,9 @@ class SwarmSimulator:
         max_speed: float, maximum speed per agent
         positions: array_like, optional initial positions (n_agents x n_dims)
         velocities: array_like, optional initial velocities (n_agents x n_dims)
+        rng: ``np.random.Generator``, ``int`` seed, or ``None`` for a
+            nondeterministic default. Used for initializing random positions
+            and velocities when ``positions`` / ``velocities`` are not supplied.
     """
     def __init__(
         self,
@@ -37,7 +42,10 @@ class SwarmSimulator:
         max_speed=5.0,
         positions=None,
         velocities=None,
+        rng: Optional[Union[int, np.random.Generator]] = None,
     ):
+        gen = rng if isinstance(rng, np.random.Generator) else np.random.default_rng(rng)
+        self._rng = gen
         # Initialize or validate positions
         if positions is not None:
             self.positions = np.asarray(positions, dtype=float)
@@ -49,7 +57,7 @@ class SwarmSimulator:
                 raise ValueError("n_agents must be provided if positions not set")
             self.n_agents = n_agents
             self.n_dims = n_dims
-            self.positions = np.random.rand(self.n_agents, self.n_dims) * 100.0
+            self.positions = gen.random((self.n_agents, self.n_dims)) * 100.0
         # Initialize or validate velocities
         if velocities is not None:
             self.velocities = np.asarray(velocities, dtype=float)
@@ -57,12 +65,12 @@ class SwarmSimulator:
                 raise ValueError("velocities shape must match positions")
         else:
             # Random unit velocities
-            angles = np.random.rand(self.n_agents) * 2 * np.pi
+            angles = gen.random(self.n_agents) * 2 * np.pi
             if self.n_dims == 2:
                 self.velocities = np.vstack((np.cos(angles), np.sin(angles))).T
             else:
                 # For higher dims, sample normal and normalize
-                v = np.random.randn(self.n_agents, self.n_dims)
+                v = gen.standard_normal((self.n_agents, self.n_dims))
                 norm = np.linalg.norm(v, axis=1, keepdims=True)
                 self.velocities = v / np.where(norm > 0, norm, 1)
         # Simulation parameters

@@ -5,15 +5,7 @@ from itertools import product
 from typing import Optional
 import numpy as np
 
-
-def _build_spatial_grid(positions: np.ndarray, cell_size: float):
-    """Return spatial hash map and integer cell indices for each position."""
-    cell = max(float(cell_size), 1e-9)
-    idx = np.floor(positions / cell).astype(int)
-    grid = {}
-    for i, key in enumerate(map(tuple, idx)):
-        grid.setdefault(key, []).append(i)
-    return grid, idx
+from gossamer.utils.spatial import build_grid as _build_spatial_grid  # re-exported for back-compat
 
 
 def _flock_step_spatial(
