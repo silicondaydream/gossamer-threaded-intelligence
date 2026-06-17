@@ -211,7 +211,7 @@ for the per-paper conventions.
 
 ## Roadmap
 
-- Differentiable policies via JAX (Brax backend; see `leviathan_diff_brax`).
+- Differentiable policies via JAX (Brax backend; see `leviathan_diff_brax` — **experimental, unvalidated stub**, not yet usable for results).
 - Graph world models (JEPA / Dreamer / graph-WM) layered on top of
   `gossamer.learning`.
 - Byzantine-robust MARL baselines in the benchmark suite.

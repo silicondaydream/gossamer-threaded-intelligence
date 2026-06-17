@@ -181,7 +181,10 @@ class FieldOfViewPerception(BasePerception):
             # normalize rel vectors
             rel_norm = rel / dists[mask][:, None]
             cos_vals = rel_norm.dot(heading)
-            fov_mask = cos_vals >= cos_th
+            # Tolerance so an agent exactly on the FOV boundary is visible:
+            # e.g. at +/-90 deg for a 180-deg FOV, cos(pi/2) is a hair above 0
+            # in floating point, which would otherwise exclude a side neighbor.
+            fov_mask = cos_vals >= cos_th - 1e-9
             idxs = idxs[fov_mask]
             rel = rel[fov_mask]
             dists_masked = dists[mask][fov_mask]

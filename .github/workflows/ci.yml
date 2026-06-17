@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package + test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .                       # pulls numpy/scipy/networkx/pandas/sklearn
+          pip install pytest ortools             # ortools for the MILP baseline tests
+          pip install torch --index-url https://download.pytorch.org/whl/cpu  # learning tests
+
+      - name: Run test suite
+        run: pytest -q

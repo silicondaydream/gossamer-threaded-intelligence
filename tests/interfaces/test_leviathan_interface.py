@@ -64,16 +64,26 @@ def test_run_invokes_step_metrics_and_callback():
     env = DummyEnv()
     adapter = LeviathanInterface(env)
     calls = []
+    live_match = []
     def callback(step, positions, velocities, metrics):
-        calls.append((step, positions.copy(), velocities.copy(), metrics.copy()))
+        # At call time the callback must receive the adapter's current state.
+        live_match.append(np.array_equal(positions, adapter.positions))
+        vel_copy = velocities.copy() if velocities is not None else None
+        calls.append((step, positions.copy(), vel_copy, metrics.copy()))
 
     final_pos, final_vel = adapter.run(3, callback=callback)
-    # Callback should be called for steps 0,1,2
+    # Callback should be called for steps 0,1,2 with that step's live state.
     assert len(calls) == 3
+    assert all(live_match)
+    # DummyEnv dynamics are pos += vel each step from [[0,0],[1,1]].
+    expected = [
+        np.array([[0.0, 1.0], [2.0, 1.0]]),
+        np.array([[0.0, 2.0], [3.0, 1.0]]),
+        np.array([[0.0, 3.0], [4.0, 1.0]]),
+    ]
     for idx, (step, pos, vel, met) in enumerate(calls):
         assert step == idx
-        # positions should equal adapter.positions at that step
-        assert np.array_equal(pos, adapter.positions)
+        assert np.array_equal(pos, expected[idx])
         assert vel is None or isinstance(vel, np.ndarray)
         assert 'step_count' in met
     # Final returned positions equal adapter.positions

@@ -166,7 +166,7 @@ def transfer_entropy(
     t = np.asarray(target, dtype=float).ravel()
     if s.shape[0] != t.shape[0] or s.size <= lag + history:
         return 0.0
-    y_future = t[history + lag - 1 + 1:]  # shift by (history+lag-1)+1 so indices align
+    y_future = t[history + lag - 1:]  # Y_{t+lag}: most-recent past sample is at t, future at t+lag
     # Build target past as a (n, history) window
     y_past_windows = np.stack(
         [t[history - 1 - j: t.size - lag - j] for j in range(history)],
