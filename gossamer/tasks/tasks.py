@@ -30,37 +30,38 @@ from gossamer.tasks.base import (
 # Rendezvous
 # --------------------------------------------------------------------------- #
 class RendezvousTask(CoordinationTask):
-    """Gather at a single point; the point drifts on the τ clock.
+    """Mutual gather: agents must agree *where* to meet, using only (delayed)
+    peer positions — no externally given point, so coordination is *necessary*
+    (an isolated agent cannot solve it). This is the peer-derived-target design
+    that yields the clean delay collapse; contrast the individually-solvable
+    home-to-known-point task, where naive coordination merely becomes a liability
+    under delay.
 
-    ``Q = exp(-mean_dist_to_goal / L0)`` — 1 when every agent sits on the
-    target, decaying smoothly with the mean distance. ``L0`` is a fixed length
-    scale (a fraction of ``bound``) so Q is domain-size invariant.
+    ``Q = exp(-mean_dist_to_centroid / L0)`` — swarm compactness, 1 when fully
+    gathered. ``L0`` is a fixed fraction of the initial spread so Q is
+    domain-size invariant. The primitive's cohesion (on delayed peers) drives the
+    gathering; large delay makes it overshoot/oscillate and Q collapses.
     """
 
     name = "rendezvous"
 
-    def __init__(self, length_scale_frac: float = 0.25, drift_frac: float = 0.2):
+    def __init__(self, length_scale_frac: float = 0.25):
         self.length_scale_frac = length_scale_frac
-        self.drift_frac = drift_frac
 
     def init_goal(self, rng, num_agents, bound):
-        point = rng.uniform(-bound * 0.5, bound * 0.5, size=3)
-        return GoalState(point=point, extra={"bound": float(bound),
-                                             "L0": float(bound) * self.length_scale_frac})
+        return GoalState(extra={"bound": float(bound),
+                                "L0": float(bound) * self.length_scale_frac})
 
     def perturb(self, goal, ctx, rng):
-        if not _reconfig_due(ctx):
-            return goal
-        bound = goal.extra["bound"]
-        step = bound * self.drift_frac
-        new_point = np.clip(goal.point + rng.uniform(-step, step, size=3),
-                            -bound * 0.5, bound * 0.5)
-        return GoalState(point=new_point, extra=goal.extra)
+        # Static target set (the meeting point is emergent); the τ axis for the
+        # mutual-gather task is its own convergence timescale.
+        return goal
 
     def coordination_quality(self, pos, vel, goal):
         if pos.shape[0] == 0:
             return 0.0
-        mean_dist = float(np.linalg.norm(pos - goal.point[None, :], axis=1).mean())
+        centroid = pos.mean(axis=0, keepdims=True)
+        mean_dist = float(np.linalg.norm(pos - centroid, axis=1).mean())
         L0 = goal.extra["L0"] or 1.0
         return _clip01(float(np.exp(-mean_dist / L0)))
 
@@ -177,6 +178,22 @@ class CoverageHoldTask(CoordinationTask):
             return 0.0
         occ = self._occupied(pos, goal.extra["bound"], goal.extra["w"])
         return _clip01(len(occ & target) / len(target))
+
+    def goal_accel(self, pos, vel, goal, max_accel):
+        # Pull agents toward the centre of the target region; the primitive's
+        # separation (on delayed peers) is what spreads them to fill the cells,
+        # so delay causes overlap/gaps and coverage drops.
+        b, w = goal.extra["bound"], goal.extra["w"]
+        cells = np.array(sorted(goal.target_cells), dtype=float) if goal.target_cells else None
+        if cells is None or cells.shape[0] == 0:
+            return np.zeros_like(pos)
+        # Cell (iy, ix) → world centre on the XY plane.
+        cx = (cells[:, 1] + 0.5) / w * (2 * b) - b
+        cy = (cells[:, 0] + 0.5) / w * (2 * b) - b
+        centre = np.array([cx.mean(), cy.mean(), 0.0])
+        d = centre[None, :] - pos
+        n = np.linalg.norm(d, axis=1, keepdims=True)
+        return max_accel * d / np.maximum(n, 1e-9)
 
 
 # --------------------------------------------------------------------------- #

@@ -100,7 +100,6 @@ class KalmanPredictor(PeerPredictor):
         self._x[:, :, 0] = first[:, :3]
         self._x[:, :, 1] = first[:, 3:6]
         self._P = np.tile(np.eye(2) * 10.0, (n, 3, 1, 1))
-        self._seen = 1
 
     def _step_filter(self, meas: np.ndarray, dt: float) -> None:
         """One predict→update over a position measurement ``meas`` (N,6)."""
@@ -122,15 +121,19 @@ class KalmanPredictor(PeerPredictor):
         self._P = np.einsum("naij,najk->naik", I_KH, P)
 
     def predict(self, history: PeerHistory, horizon_steps: int, dt: float) -> np.ndarray:
-        win = history.window(history.capacity)  # oldest→newest
+        win = history.window(history.capacity)  # oldest→newest, (w, N, 6)
         if win.shape[0] == 0:
             raise ValueError("empty history")
-        if self._x is None:
-            self._ensure_init(win[0])
-        # Ingest any snapshots newer than what we've filtered.
-        for k in range(self._seen, win.shape[0]):
+        # Re-run the filter over the whole current window each call (stateless
+        # across calls). This is robust to *both* usage patterns — a one-shot
+        # batch of snapshots and the runner's push-one/predict-one loop — and
+        # sidesteps the ring-index hazard (a fixed-size window's length stops
+        # growing while its contents shift, so an incremental index-diff would
+        # silently stop ingesting and roll a stale posterior forward → divergence).
+        # The window is small (≤ capacity), so the re-filter cost is negligible.
+        self._ensure_init(win[0])
+        for k in range(1, win.shape[0]):
             self._step_filter(win[k], dt)
-            self._seen = k + 1
         # Roll the posterior forward `horizon_steps` without new measurements.
         F = np.array([[1.0, dt], [0.0, 1.0]])
         Q = self.q * np.array([[dt ** 3 / 3, dt ** 2 / 2], [dt ** 2 / 2, dt]])

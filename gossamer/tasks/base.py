@@ -97,6 +97,20 @@ class CoordinationTask(ABC):
         """Return coordination quality ``Q ∈ [0, 1]`` (higher is better)."""
         ...
 
+    def goal_accel(self, pos: np.ndarray, vel: np.ndarray, goal: GoalState,
+                   max_accel: float) -> np.ndarray:
+        """Task objective as a per-agent acceleration toward the (moving) goal.
+
+        This is the *objective* channel: each agent knows the common goal and its
+        own true position, so this term is **not** delayed. The coordination
+        primitive (cohesion / spacing / consensus, on *delayed* peer state) is the
+        channel delay degrades. Combining the two makes ``delay/τ`` the controlling
+        ratio — a fast-moving goal (small τ) plus stale coordination (large delay)
+        is what collapses Q. Default: no objective pull (pure self-referential
+        coordination), returned as a zero field.
+        """
+        return np.zeros_like(pos)
+
 
 def _clip01(x: float) -> float:
     """Clamp a scalar into [0, 1] (guards against nan/inf blowing up a run)."""

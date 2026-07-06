@@ -37,21 +37,27 @@ def test_quality_in_unit_interval_for_random_states(name, cls):
         assert np.isfinite(q)
 
 
-def test_rendezvous_quality_peaks_at_goal_and_monotone():
+def test_rendezvous_quality_peaks_when_gathered_and_monotone():
+    # Mutual-gather: Q is swarm compactness (centroid-relative), not distance to
+    # an external point — coordination is necessary, so the metric rewards the
+    # swarm agreeing on a meeting location.
     task = RendezvousTask()
     goal = task.init_goal(_rng(3), N, BOUND)
-    on_goal = np.tile(goal.point, (N, 1))
     vel = np.zeros((N, 3))
-    q_on = task.coordination_quality(on_goal, vel, goal)
-    assert q_on == pytest.approx(1.0, abs=1e-6)
 
-    # Moving agents closer to the goal never decreases Q.
-    far = on_goal + 30.0
-    mid = on_goal + 10.0
-    assert task.coordination_quality(mid, vel, goal) >= task.coordination_quality(far, vel, goal)
+    # Fully gathered at a single (arbitrary) point → Q = 1.
+    gathered = np.tile(np.array([12.0, -5.0, 3.0]), (N, 1))
+    assert task.coordination_quality(gathered, vel, goal) == pytest.approx(1.0, abs=1e-6)
 
-    # Scatter to the edges collapses Q toward 0.
-    scatter = np.tile(goal.point, (N, 1)) + np.sign(np.arange(N * 3).reshape(N, 3) - 1) * BOUND
+    # Tighter clusters score no lower than looser ones.
+    rng = _rng(30)
+    base = rng.normal(size=(N, 3))
+    tight = base * (BOUND * 0.001)
+    loose = base * (BOUND * 0.05)
+    assert task.coordination_quality(tight, vel, goal) >= task.coordination_quality(loose, vel, goal)
+
+    # Scatter across the domain collapses Q toward 0.
+    scatter = _rng(31).uniform(-BOUND, BOUND, size=(N, 3))
     assert task.coordination_quality(scatter, vel, goal) < 0.1
 
 
