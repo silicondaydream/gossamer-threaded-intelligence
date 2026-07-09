@@ -185,8 +185,68 @@ def transfer_entropy(
     return float(max(i_full - i_reduced, 0.0))
 
 
+# ---- Collective -> individual information flow (swarm-level) ----
+
+def collective_transfer_entropy(
+    signal: np.ndarray,
+    lag: int = 1,
+    k: int = 4,
+    history: int = 1,
+    max_agents: int = 48,
+    seed: int = 0,
+) -> float:
+    """Mean directed information flow from the collective into the individual,
+    in nats.
+
+    ``signal`` is a ``(T, N)`` array of a per-agent scalar sampled over ``T``
+    steps (e.g. each agent's speed deviation from the swarm mean). For each of
+    up to ``max_agents`` agents we estimate the transfer entropy from the
+    leave-one-out collective aggregate of that signal into the agent's own
+    future, and average over agents.
+
+    Why not transfer entropy on a single global order parameter? That is what
+    the earlier cost-accounting proxy did, and it collapses to a non-finite /
+    zero estimate the moment the swarm converges: one saturated scalar carries
+    no distributional structure for a kNN estimator to bite on. This per-agent
+    construction stays well-defined across the whole coordination regime — the
+    individuals keep fluctuating even after the mean field settles — so it
+    tracks how much the communication channel is *actually* carrying as delay
+    and bandwidth change, which is exactly the axis the cost frontier needs.
+
+    Returns ``0.0`` (rather than raising) when the series is too short or the
+    swarm too small to estimate.
+    """
+    sig = np.asarray(signal, dtype=float)
+    if sig.ndim != 2:
+        raise ValueError(f"signal must be (T, N), got shape {sig.shape}")
+    T, N = sig.shape
+    # KSG needs enough joint samples after the lag/history windowing.
+    if T < (lag + history + k + 2) or N < 2:
+        return 0.0
+
+    # Leave-one-out collective aggregate: agg_i(t) = mean over j != i of sig.
+    col_sum = sig.sum(axis=1)
+    denom = float(N - 1)
+
+    idx = np.arange(N)
+    if N > max_agents:
+        rng = np.random.default_rng(seed)
+        idx = rng.choice(N, size=max_agents, replace=False)
+
+    vals = []
+    for i in idx:
+        agg_i = (col_sum - sig[:, i]) / denom
+        te_i = transfer_entropy(agg_i, sig[:, i], lag=lag, k=k, history=history)
+        if np.isfinite(te_i):
+            vals.append(te_i)
+    if not vals:
+        return 0.0
+    return float(np.mean(vals))
+
+
 __all__ = [
     "mutual_information_histogram",
     "mutual_information_ksg",
     "transfer_entropy",
+    "collective_transfer_entropy",
 ]

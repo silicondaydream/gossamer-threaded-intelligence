@@ -19,6 +19,7 @@ from gossamer.metrics.criticality import (
     velocity_correlation,
 )
 from gossamer.metrics.info import (
+    collective_transfer_entropy,
     mutual_information_histogram,
     mutual_information_ksg,
     transfer_entropy,
@@ -116,3 +117,33 @@ def test_transfer_entropy_is_directional():
     te_backward = transfer_entropy(t, s, lag=1, k=4)
     assert te_forward > te_backward
     assert te_forward > 0.1
+
+
+def test_collective_transfer_entropy_higher_when_coupled():
+    # A swarm where each agent tracks the collective aggregate should read
+    # measurably more collective->individual flow than an uncoupled swarm.
+    rng = np.random.default_rng(11)
+    T, N = 600, 12
+
+    # Uncoupled: every agent is its own independent random walk.
+    indep = np.cumsum(rng.normal(size=(T, N)), axis=0)
+
+    # Coupled: each agent's next step is pulled toward the collective mean.
+    coupled = np.zeros((T, N))
+    coupled[0] = rng.normal(size=N)
+    for tt in range(1, T):
+        agg = coupled[tt - 1].mean()
+        coupled[tt] = 0.6 * agg + 0.4 * coupled[tt - 1] + rng.normal(scale=0.3, size=N)
+
+    cte_indep = collective_transfer_entropy(indep, lag=1, k=4, seed=0)
+    cte_coupled = collective_transfer_entropy(coupled, lag=1, k=4, seed=0)
+    assert cte_coupled > cte_indep
+    assert cte_coupled > 0.05
+    # And it must not silently collapse to zero the way the global-scalar
+    # proxy did — the coupled estimate is a real, finite, positive number.
+    assert np.isfinite(cte_coupled)
+
+
+def test_collective_transfer_entropy_short_series_is_zero():
+    assert collective_transfer_entropy(np.zeros((3, 5)), lag=1, k=4) == 0.0
+    assert collective_transfer_entropy(np.zeros((100, 1)), lag=1, k=4) == 0.0

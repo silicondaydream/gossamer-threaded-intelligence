@@ -52,6 +52,10 @@ steps:
             'gossamer.prediction.baselines',
         ):
             __import__(mod)
+        # Symbol-level check: module import alone can't catch a function that
+        # never shipped. collective_transfer_entropy (the P2 cost metric) is
+        # imported lazily by the consumer, so assert it exists in the wheel here.
+        from gossamer.metrics.info import collective_transfer_entropy  # noqa: F401
         print("✅ Import OK")
         PY
 
