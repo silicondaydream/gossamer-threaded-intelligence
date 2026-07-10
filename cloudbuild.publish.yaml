@@ -50,12 +50,20 @@ steps:
             'gossamer.tasks.tasks',
             'gossamer.prediction',
             'gossamer.prediction.baselines',
+            'gossamer.engine',
+            'gossamer.algorithms.coordination.kernels',
         ):
             __import__(mod)
-        # Symbol-level check: module import alone can't catch a function that
-        # never shipped. collective_transfer_entropy (the P2 cost metric) is
-        # imported lazily by the consumer, so assert it exists in the wheel here.
+        # Symbol-level checks: importing a module cannot catch a function that
+        # never shipped. Each of these is consumed by Maneuver.Map, so a wheel
+        # missing one breaks the runner rather than this build.
         from gossamer.metrics.info import collective_transfer_entropy  # noqa: F401
+        # policies.py imports these instead of reimplementing them (M6.6).
+        from gossamer.algorithms.coordination.kernels import (  # noqa: F401
+            boids_accel_edges, kdtree_edges,
+        )
+        # The benchmark harness steps through this, not a private copy (M6.7).
+        from gossamer.engine import PhysicsEngine, ReferenceEngine  # noqa: F401
         print("✅ Import OK")
         PY
 

@@ -1,12 +1,19 @@
 """
 Benchmark driver and leaderboard generation.
 
-Runs a scenario + baseline combination under a lightweight in-process
-NumPy stepper (so the benchmark suite has no Leviathan dependency — the
-stepper uses the same semi-implicit Euler semantics as the C++ default
-path). When ``engine_mode="inprocess"`` is requested, the harness routes
-through the Leviathan pybind11 module instead for apples-to-apples
-numbers against paper runs.
+Runs a scenario + baseline combination against an injected
+:class:`gossamer.engine.PhysicsEngine`. The default is
+:class:`~gossamer.engine.ReferenceEngine`, a pure-NumPy stepper whose kinematics
+are pinned to Leviathan's, so the suite has no compiled dependency and can be run
+by anyone who installs the wheel. Pass Leviathan itself (or Maneuver.Map's
+``EngineClient``) to produce numbers directly comparable with paper runs.
+
+This used to hardcode a private ``_step_numpy`` and its docstring claimed an
+``engine_mode="inprocess"`` Leviathan path that **did not exist** — no such
+parameter was ever defined. Worse, ``_step_numpy`` clamped speed while Leviathan
+does not, so the benchmark silently stabilised policies that diverge on the real
+engine. A benchmark whose substrate differs from the papers' cannot be the
+neutral standard it exists to be.
 
 Output shape:
 
@@ -26,6 +33,7 @@ import numpy as np
 
 from gossamer.benchmarks.baselines import Baseline, DEFAULT_BASELINES
 from gossamer.benchmarks.scenarios import ALL_SCENARIOS, Scenario, ScenarioContext
+from gossamer.engine import PhysicsEngine, ReferenceEngine
 
 
 @dataclass
@@ -37,7 +45,12 @@ class BenchmarkConfig:
     bound: float = 100.0
     seed: int = 42
     record_trajectory: bool = True
+    # Advisory only. Leviathan does not clamp speed, so neither does the harness;
+    # baselines that want a speed limit must enforce it in the acceleration they
+    # return. The old stepper clamped here, which quietly rescued policies that
+    # diverge on the real engine.
     max_speed: float = 10.0
+    integrator: str = "euler"
 
 
 @dataclass
@@ -53,50 +66,57 @@ class BenchmarkResult:
     extra: Dict[str, float] = field(default_factory=dict)
 
 
-def _step_numpy(pos: np.ndarray, vel: np.ndarray, accel: np.ndarray,
-                dt: float, bound: float, max_speed: float) -> Tuple[np.ndarray, np.ndarray]:
-    """Semi-implicit Euler with periodic-box wrap and speed clip."""
-    new_vel = vel + accel * dt
-    speed = np.linalg.norm(new_vel, axis=1, keepdims=True)
-    scale = np.where(speed > max_speed, max_speed / np.maximum(speed, 1e-12), 1.0)
-    new_vel = new_vel * scale
-    new_pos = pos + new_vel * dt
-    # Periodic box
-    new_pos = np.where(new_pos > bound, -bound, np.where(new_pos < -bound, bound, new_pos))
-    return new_pos, new_vel
-
-
 def run_benchmark(
     scenario: Scenario,
     baseline: Baseline,
     config: BenchmarkConfig,
     baseline_name: str = "baseline",
+    engine: Optional[PhysicsEngine] = None,
 ) -> BenchmarkResult:
     """Run a single scenario + baseline combination end to end.
 
-    Uses the pure-NumPy stepper by default; deterministic for a given
-    seed. For Leviathan-engine runs, drive the engine externally and
-    call this via a callable that forwards positions/velocities.
+    ``engine`` defaults to :class:`~gossamer.engine.ReferenceEngine` (pure NumPy,
+    Leviathan-equivalent kinematics) and is deterministic for a given seed. Pass
+    Leviathan — or any object satisfying :class:`~gossamer.engine.PhysicsEngine` —
+    to run the suite on the same substrate as the papers.
+
+    The scenario owns the initial state, so the engine is created and then
+    ``set_state``'d rather than being allowed to randomise its own.
     """
+    engine = engine or ReferenceEngine()
     rng = np.random.default_rng(config.seed)
     pos, vel = scenario.init_state(rng, config.num_agents, config.bound)
     trajectory: List[Dict[str, np.ndarray]] = []
     total_reward = 0.0
 
+    sim_id = engine.create_sim({
+        "num_agents": str(config.num_agents), "dt": str(config.dt),
+        "bound": str(config.bound), "seed": str(config.seed),
+        "integrator": config.integrator,
+        # The channel is off: benchmark scenarios score coordination, and a run
+        # with no comm keys makes the engine's comm model a no-op.
+    })
+    engine.set_state(sim_id, pos, vel)
+
     t0 = time.perf_counter()
     prev_pos = pos.copy()
     prev_vel = vel.copy()
 
-    for step in range(config.steps):
-        ctx = ScenarioContext(step=step, total_steps=config.steps, dt=config.dt)
-        accel = baseline(pos, vel, rng)
-        pos, vel = _step_numpy(pos, vel, accel, config.dt, config.bound, config.max_speed)
-        r = scenario.step_reward(pos, vel, prev_pos, prev_vel, ctx)
-        total_reward += float(np.sum(r))
-        if config.record_trajectory:
-            trajectory.append({"pos": pos.copy(), "vel": vel.copy()})
-        prev_pos = pos
-        prev_vel = vel
+    try:
+        for step in range(config.steps):
+            ctx = ScenarioContext(step=step, total_steps=config.steps, dt=config.dt)
+            accel = baseline(pos, vel, rng)
+            pos, vel = engine.step(sim_id, accel)
+            pos = np.asarray(pos, dtype=float)
+            vel = np.asarray(vel, dtype=float)
+            r = scenario.step_reward(pos, vel, prev_pos, prev_vel, ctx)
+            total_reward += float(np.sum(r))
+            if config.record_trajectory:
+                trajectory.append({"pos": pos.copy(), "vel": vel.copy()})
+            prev_pos = pos
+            prev_vel = vel
+    finally:
+        engine.destroy(sim_id)
 
     elapsed = time.perf_counter() - t0
     metric = scenario.terminal_metric(trajectory)
@@ -118,12 +138,14 @@ def leaderboard(
     baselines: Optional[List[str]] = None,
     configs: Optional[Dict[str, BenchmarkConfig]] = None,
     num_seeds: int = 1,
+    engine: Optional[PhysicsEngine] = None,
 ) -> List[BenchmarkResult]:
     """Run the full matrix of ``scenarios x baselines x seeds``.
 
     Returns all results flattened; aggregate afterward with
     :func:`generate_leaderboard_md`. Missing configs default to
-    :class:`BenchmarkConfig`.
+    :class:`BenchmarkConfig`. ``engine`` is forwarded to every cell, so a whole
+    leaderboard can be regenerated on Leviathan for paper-comparable numbers.
     """
     scenarios = scenarios or list(ALL_SCENARIOS.keys())
     baselines = baselines or list(DEFAULT_BASELINES.keys())
@@ -140,7 +162,8 @@ def leaderboard(
                 # Re-instantiate scenario so stateful scenarios reset between runs
                 scenario = scenario_cls() if callable(scenario_cls) else scenario_cls
                 baseline = baseline_factory(scenario)
-                result = run_benchmark(scenario, baseline, run_cfg, baseline_name=b_name)
+                result = run_benchmark(scenario, baseline, run_cfg,
+                                       baseline_name=b_name, engine=engine)
                 results.append(result)
     return results
 

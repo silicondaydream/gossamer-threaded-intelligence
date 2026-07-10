@@ -12,12 +12,15 @@ bracket every comparison:
 * ``uses_comm`` primitives run at ``delay=0`` are the *full-comm* upper
   reference — same primitive, zero delay (a flag on the run, not a class).
 
-This gossamer-side interface is the canonical, unit-tested definition the
-papers cite. The Maneuver.Map runner does **not** route its hot path through
-these wrappers — it keeps the vectorized seam in ``policies.py`` — but the
-runner's registry is locked to *equivalence* with these implementations by the
-test suite (as ``test_policies.py`` already does for DMB density). ``act``
-returns accelerations, matching the engine's ``step(actions)`` contract.
+This gossamer-side interface is the canonical, unit-tested definition the papers
+cite, and it now runs the *same* vectorised kernels the Maneuver.Map runner does
+(``gossamer.algorithms.coordination.kernels``). Previously these wrappers called
+the per-agent-loop ``flock_step`` / ``dmb_step`` while the runner executed its own
+forked edge-list copies in ``policies.py``, and the two were held in agreement by
+tests rather than by construction. The loop versions survive as the *reference
+implementations* the kernels are checked against — an oracle, not a second hot
+path. ``act`` returns accelerations, matching the engine's ``step(actions)``
+contract.
 """
 from __future__ import annotations
 
@@ -27,7 +30,10 @@ from typing import Any, Callable, Dict, Optional, Tuple
 import numpy as np
 
 from gossamer.algorithms.coordination.flocking import flock_step
-from gossamer.algorithms.coordination.dmb import DMBParams, dmb_step
+from gossamer.algorithms.coordination.dmb import (
+    DMBParams, density_modulated_weights, dmb_step,
+)
+from gossamer.algorithms.coordination.kernels import boids_accel_edges, kdtree_edges
 from gossamer.tasks.base import TaskContext
 
 
@@ -68,16 +74,17 @@ class FlockingPrimitive(CoordinationPrimitive):
 
     def act(self, pos, vel, dt, ctx, params):
         p = params or {}
-        new_pos, new_vel = flock_step(
-            pos, vel, dt,
-            alignment_weight=p.get("alignment_weight", 1.0),
-            cohesion_weight=p.get("cohesion_weight", 1.0),
-            separation_weight=p.get("separation_weight", 1.5),
-            neighbor_radius=p.get("neighbor_radius", 10.0),
-            separation_distance=p.get("separation_distance", 1.0),
-            max_speed=p.get("max_speed", 5.0),
+        radius = p.get("neighbor_radius", 10.0)
+        eu, ev = kdtree_edges(pos, radius)
+        accel = boids_accel_edges(
+            pos, vel, eu, ev, dt,
+            p.get("alignment_weight", 1.0),
+            p.get("cohesion_weight", 1.0),
+            p.get("separation_weight", 1.5),
+            p.get("separation_distance", 1.0),
+            p.get("max_speed", 5.0),
         )
-        return _accel_from_step(vel, new_vel, dt), {}
+        return accel, {}
 
 
 class NoCommReference(CoordinationPrimitive):
@@ -112,17 +119,31 @@ class DMBPrimitive(CoordinationPrimitive):
         p = params or {}
         dmb_kwargs = p.get("dmb_params", {})
         dparams = DMBParams(**dmb_kwargs) if dmb_kwargs else DMBParams()
-        new_pos, new_vel, info = dmb_step(
-            pos, vel, dt, dparams,
-            neighbor_radius=p.get("neighbor_radius", 10.0),
-            separation_distance=p.get("separation_distance", 1.0),
-            max_speed=p.get("max_speed", 5.0),
-            max_accel=p.get("max_accel"),
-            sensing_noise=p.get("sensing_noise", 0.0),
-            rng=self._rng,
+        radius = p.get("neighbor_radius", 10.0)
+
+        # Sensing noise perturbs the *perceived* peer positions only; the caller
+        # integrates the true state. Matches the runner's perception seam.
+        sensing_noise = p.get("sensing_noise", 0.0)
+        view = pos
+        if sensing_noise > 0.0:
+            rng = self._rng or np.random.default_rng()
+            view = pos + rng.normal(0.0, sensing_noise, size=pos.shape)
+
+        # Density is the degree of the radius graph (== gossamer `local_density`);
+        # the weights are the same sigmoid schedule; the steering is the shared
+        # kernel. This is exactly what the runner's `_act_dmb` computes.
+        eu, ev = kdtree_edges(view, radius)
+        dens = np.zeros(pos.shape[0])
+        if eu.size:
+            np.add.at(dens, eu, 1.0)
+            np.add.at(dens, ev, 1.0)
+        wa, wc, ws = density_modulated_weights(dens, dparams)
+        accel = boids_accel_edges(
+            view, vel, eu, ev, dt, wa, wc, ws,
+            p.get("separation_distance", 1.0),
+            p.get("max_speed", 5.0),
         )
-        telemetry = {"density": info.get("density")} if "density" in info else {}
-        return _accel_from_step(vel, new_vel, dt), telemetry
+        return accel, {"density": dens}
 
 
 class GossipConsensusPrimitive(CoordinationPrimitive):
