@@ -1,17 +1,38 @@
 """
 Concrete DCC benchmark tasks, each with a normalized ``coordination_quality``.
 
-Four tasks span the coordination regimes the trilogy studies:
-
-* :class:`RendezvousTask` — agree on a (moving) meeting point.
+* :class:`RendezvousTask` — mutually agree *where* to meet. Purely peer-derived.
+* :class:`ConsensusTask` — drive the swarm's positional variance to zero.
 * :class:`FormationHoldTask` — hold (and reconfigure) a geometric formation.
 * :class:`CoverageHoldTask` — hold coverage of a (drifting) target cell set.
-* :class:`ConsensusTask` — agree on a (drifting) scalar/vector value.
+* :class:`TrackingRendezvousTask` — gather on a goal only a few agents can see,
+  which jumps on the τ clock. **The task-timescale axis.**
 
-Each ``coordination_quality`` returns ``Q ∈ [0, 1]`` (1 = perfect), and each
-``perturb`` moves its goal on the ``tau_sec`` clock so ``delay/τ`` is a
-controlled axis. Length scales are normalized by ``bound`` (captured at
-``init_goal`` time) so quality is comparable across domain sizes.
+Each ``coordination_quality`` returns ``Q ∈ [0, 1]`` (1 = perfect). Length scales
+are normalized by ``bound`` (captured at ``init_goal`` time) so quality is
+comparable across domain sizes.
+
+**Which tasks does ``tau_sec`` actually control?** Only those that (a) move their
+goal in ``perturb`` *and* (b) let that goal reach the dynamics or the metric.
+
+===================  ===========  ==================  ==================
+task                 goal moves   goal enters Q/accel  τ controls Q?
+===================  ===========  ==================  ==================
+rendezvous           no           no                   **no**
+consensus            yes          no                   **no**
+formation_hold       yes          Q only               weakly
+coverage_hold        yes          yes                  yes (Q ≈ 0.01)
+tracking_rendezvous  yes          yes                  **yes**
+===================  ===========  ==================  ==================
+
+``rendezvous`` and ``consensus`` are τ-inert *by design*: their Q measures swarm
+compactness / variance reduction, which is precisely what makes coordination
+necessary and what delay degrades. This is the right design for the phase-diagram
+paper — but it means ``tau_sec`` is not the timescale in "the ratio of delay to
+the coordination timescale". That is the swarm's **intrinsic** convergence time,
+set by the primitive's gain / neighbour radius / speed. Sweeping ``tau_sec``
+against those two tasks returns a null by construction. Use
+:class:`TrackingRendezvousTask` for an *imposed* task timescale.
 """
 from __future__ import annotations
 
@@ -238,8 +259,89 @@ class ConsensusTask(CoordinationTask):
         return _clip01(1.0 - var / var0)
 
 
+# --------------------------------------------------------------------------- #
+# Tracking rendezvous — the imposed-task-timescale axis
+# --------------------------------------------------------------------------- #
+class TrackingRendezvousTask(CoordinationTask):
+    """Gather on a goal that jumps on the τ clock and that only a few agents see.
+
+    This is the task the ``delay/τ`` question needs, and the one the other four
+    could not provide. ``rendezvous`` and ``consensus`` are τ-inert (their goal
+    never reaches the dynamics or the metric); ``coverage_hold`` couples to τ but
+    no primitive achieves it. Here:
+
+    * ``perturb`` jumps the meeting point once per ``tau_sec`` — the **imposed**
+      task timescale.
+    * ``goal_accel`` pulls **only the informed fraction** toward it. Informed
+      agents know the goal and their own true position, so that channel is not
+      delayed.
+    * ``Q`` scores *every* agent's distance to the goal, so the uninformed
+      majority can only succeed by following the informed minority **through the
+      delayed peer graph**.
+
+    Coordination is therefore necessary (an uninformed agent cannot solve it
+    alone), which is the same design principle that makes ``rendezvous`` a clean
+    delay probe — but now with a *controllable* task timescale. A small τ (goal
+    jumps often) plus a large delay (followers see stale leaders) is what should
+    collapse Q, and whether it collapses on ``delay/τ`` is the open question.
+
+    Setting ``informed_frac = 1.0`` makes the task individually solvable and Q
+    should become delay-insensitive: a useful negative control, not a bug.
+    """
+
+    name = "tracking_rendezvous"
+
+    def __init__(self, informed_frac: float = 0.15, length_scale_frac: float = 0.25,
+                 jump_frac: float = 0.5):
+        if not 0.0 < informed_frac <= 1.0:
+            raise ValueError(f"informed_frac must be in (0, 1], got {informed_frac}")
+        self.informed_frac = informed_frac
+        self.length_scale_frac = length_scale_frac
+        self.jump_frac = jump_frac
+
+    def init_goal(self, rng, num_agents, bound):
+        n_informed = max(1, int(round(self.informed_frac * num_agents)))
+        informed = np.zeros(num_agents, dtype=bool)
+        informed[rng.choice(num_agents, size=n_informed, replace=False)] = True
+        value = rng.uniform(-bound * 0.5, bound * 0.5, size=3)
+        return GoalState(value=value, extra={
+            "bound": float(bound),
+            "L0": float(bound) * self.length_scale_frac,
+            "informed": informed,
+        })
+
+    def perturb(self, goal, ctx, rng):
+        if not _reconfig_due(ctx):
+            return goal
+        bound = goal.extra["bound"]
+        step = bound * self.jump_frac
+        new_value = np.clip(goal.value + rng.uniform(-step, step, size=3),
+                            -bound * 0.5, bound * 0.5)
+        return GoalState(value=new_value, extra=goal.extra)
+
+    def goal_accel(self, pos, vel, goal, max_accel):
+        accel = np.zeros_like(pos)
+        informed = goal.extra["informed"]
+        if pos.shape[0] != informed.shape[0]:
+            # Agent count changed under us (fault module); fall back to no pull
+            # rather than mis-indexing a stale mask.
+            return accel
+        d = goal.value[None, :] - pos[informed]
+        n = np.linalg.norm(d, axis=1, keepdims=True)
+        accel[informed] = max_accel * d / np.maximum(n, 1e-9)
+        return accel
+
+    def coordination_quality(self, pos, vel, goal):
+        if pos.shape[0] == 0:
+            return 0.0
+        mean_dist = float(np.linalg.norm(pos - goal.value[None, :], axis=1).mean())
+        L0 = goal.extra["L0"] or 1.0
+        return _clip01(float(np.exp(-mean_dist / L0)))
+
+
 ALL_TASKS = {
     "rendezvous": RendezvousTask,
+    "tracking_rendezvous": TrackingRendezvousTask,
     "formation_hold": FormationHoldTask,
     "coverage_hold": CoverageHoldTask,
     "consensus": ConsensusTask,
@@ -252,4 +354,5 @@ __all__ = [
     "CoverageHoldTask",
     "FormationHoldTask",
     "RendezvousTask",
+    "TrackingRendezvousTask",
 ]

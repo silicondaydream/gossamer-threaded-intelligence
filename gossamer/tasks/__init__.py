@@ -1,7 +1,10 @@
 """Unified coordination-task / quality API for the DCC trilogy (P1–P3).
 
-Every task exposes a normalized ``coordination_quality(pos, vel, goal) -> Q``
-in ``[0, 1]`` and a τ-paced ``perturb`` so ``delay/τ`` is a controlled axis.
+Every task exposes a normalized ``coordination_quality(pos, vel, goal) -> Q`` in
+``[0, 1]`` and a τ-paced ``perturb``. Note that ``perturb`` moving the goal is
+NOT sufficient for ``tau_sec`` to control Q — the goal must also reach the
+dynamics (``goal_accel``) or the metric. See the table in ``gossamer.tasks.tasks``;
+``TrackingRendezvousTask`` is the task with a genuinely controlled τ axis.
 """
 from gossamer.tasks.base import CoordinationTask, GoalState, TaskContext
 from gossamer.tasks.tasks import (
@@ -10,6 +13,7 @@ from gossamer.tasks.tasks import (
     CoverageHoldTask,
     FormationHoldTask,
     RendezvousTask,
+    TrackingRendezvousTask,
 )
 
 __all__ = [
@@ -21,4 +25,5 @@ __all__ = [
     "GoalState",
     "RendezvousTask",
     "TaskContext",
+    "TrackingRendezvousTask",
 ]

@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="gossamer-threaded-intelligence",  # Distribution name (unique in index)
-    version="0.4.0",
+    version="0.5.0",
     description="Gossamer Threaded Intelligence: swarm coordination algorithms + swappable DCC primitives, a unified coordination-task/quality API, peer-state predictors, graph-based message-passing policies, information-theoretic + criticality metrics, a MARL toolkit, and the Arboria Swarm Benchmark.",
     author="Arboria Labs",
     license="MIT",

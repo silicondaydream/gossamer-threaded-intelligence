@@ -101,13 +101,27 @@ class CoordinationTask(ABC):
                    max_accel: float) -> np.ndarray:
         """Task objective as a per-agent acceleration toward the (moving) goal.
 
-        This is the *objective* channel: each agent knows the common goal and its
-        own true position, so this term is **not** delayed. The coordination
-        primitive (cohesion / spacing / consensus, on *delayed* peer state) is the
-        channel delay degrades. Combining the two makes ``delay/τ`` the controlling
-        ratio — a fast-moving goal (small τ) plus stale coordination (large delay)
-        is what collapses Q. Default: no objective pull (pure self-referential
-        coordination), returned as a zero field.
+        The *objective* channel: an informed agent knows the goal and its own true
+        position, so this term is **not** delayed. The coordination primitive
+        (cohesion / spacing / consensus, on *delayed* peer state) is the channel
+        delay degrades. Only when both are present does ``delay/τ`` become the
+        controlling ratio.
+
+        **This default returns a zero field, and a task that does not override it
+        is τ-INERT** — the τ clock will move a goal that nothing reads and nothing
+        steers toward, so ``tau_sec`` cannot affect ``Q``. That is the case for
+        ``rendezvous`` and ``consensus``, which are *purely peer-derived by design*:
+        their Q measures swarm compactness / variance reduction, which is exactly
+        what makes coordination necessary and what the delay axis degrades. It is
+        **not** an oversight, but it does mean:
+
+        * sweeping ``tau_sec`` against those tasks yields a null by construction;
+        * the "timescale" in the phase-diagram paper's claim is the swarm's
+          *intrinsic* convergence time (set by the primitive's gain / radius /
+          speed), not this configured ``tau_sec``.
+
+        Use :class:`~gossamer.tasks.tasks.TrackingRendezvousTask` when you need an
+        *imposed* task timescale that genuinely couples to Q.
         """
         return np.zeros_like(pos)
 

@@ -64,6 +64,9 @@ steps:
         )
         # The benchmark harness steps through this, not a private copy (M6.7).
         from gossamer.engine import PhysicsEngine, ReferenceEngine  # noqa: F401
+        # The only task whose Q actually responds to tau_sec (P4b).
+        from gossamer.tasks import ALL_TASKS, TrackingRendezvousTask  # noqa: F401
+        assert "tracking_rendezvous" in ALL_TASKS
         print("✅ Import OK")
         PY
 
