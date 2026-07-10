@@ -16,3 +16,6 @@ docs/_build/
 *.coverage
 coverage.xml
 /.mypy_cache/
+
+# macOS
+.DS_Store

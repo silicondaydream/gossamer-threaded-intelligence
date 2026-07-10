@@ -6,7 +6,6 @@ Modules
 
    gossamer
    gossamer.simulator
-   gossamer.agents
    gossamer.algorithms
    gossamer.communication
    gossamer.decision_making
