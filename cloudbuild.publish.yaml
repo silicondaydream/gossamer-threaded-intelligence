@@ -67,6 +67,38 @@ steps:
         # The only task whose Q actually responds to tau_sec (P4b).
         from gossamer.tasks import ALL_TASKS, TrackingRendezvousTask  # noqa: F401
         assert "tracking_rendezvous" in ALL_TASKS
+
+        # The benchmark is the N2 moat and ships as a public package, but the gate
+        # only ever checked that `gossamer.benchmarks` IMPORTS — so a wheel could
+        # ship with the whole public API missing and pass.
+        from gossamer.benchmarks import (  # noqa: F401
+            ALL_SCENARIOS, DEFAULT_BASELINES, BenchmarkConfig,
+            generate_leaderboard_md, leaderboard, run_benchmark,
+        )
+        assert set(ALL_SCENARIOS) == {
+            "dispersal", "rendezvous", "coverage", "leader_follower", "byzantine"
+        }, ALL_SCENARIOS
+        assert set(DEFAULT_BASELINES) == {
+            "random", "gossamer_flocking", "greedy"
+        }, DEFAULT_BASELINES
+
+        # ByzantineScenario was a NO-OP: it marked its adversaries and the harness
+        # never read the marks, so the "byzantine" leaderboard row was a plain
+        # rendezvous run. The corruption hook is what makes it adversarial at all,
+        # and it is reached through the Scenario base class — exactly the kind of
+        # surface that fails silently on a stale wheel and reads as a result.
+        import numpy as np
+        from gossamer.benchmarks.scenarios import ByzantineScenario
+        _sc = ByzantineScenario(byzantine_fraction=1.0, adversary="inverted")
+        _sc.init_state(np.random.default_rng(0), num_agents=4, bound=10.0)
+        assert np.allclose(
+            _sc.corrupt_actions(np.ones((4, 3)), np.random.default_rng(0), None), -1.0
+        ), "ByzantineScenario is not corrupting actions — the benchmark row is a lie"
+
+        # The adapter that lets the benchmark run on the real substrate. Its absence
+        # is why every benchmark number to date came from ReferenceEngine.
+        from gossamer.leviathan_engine import LeviathanEngine  # noqa: F401
+        from gossamer.benchmarks.cli import main as _bench_main  # noqa: F401
         print("✅ Import OK")
         PY
 

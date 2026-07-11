@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Tuple
 
 import numpy as np
+from scipy.spatial import cKDTree
 
 
 @dataclass
@@ -53,6 +54,22 @@ class Scenario(ABC):
     def terminal_metric(self, trajectory: list) -> float:
         ...
 
+    def corrupt_actions(self, accel: np.ndarray, rng: np.random.Generator,
+                        ctx: ScenarioContext) -> np.ndarray:
+        """Hook for a scenario to tamper with the baseline's chosen actions.
+
+        The default is the identity: an honest scenario returns what the policy
+        asked for. :class:`ByzantineScenario` overrides it to replace the marked
+        agents' commands with garbage — which is the ONLY thing that makes it an
+        adversarial scenario at all.
+
+        This hook exists because it did not, and the omission was silent: the
+        scenario computed `byzantine_indices` and nothing ever read them, so the
+        "byzantine" row of the leaderboard was a plain rendezvous run under a
+        different label.
+        """
+        return accel
+
 
 # ---- Concrete scenarios ----
 
@@ -67,19 +84,22 @@ class DispersalScenario(Scenario):
         vel = np.zeros_like(pos)
         return pos, vel
 
+    # These used to build the full (N, N, 3) pairwise tensor, despite a comment
+    # claiming they sampled a subset "because full pairwise is too slow at scale".
+    # At this scenario's documented recommended_agents ceiling of 10_000 that is a
+    # 2.4 TB allocation — the benchmark could not run its own advertised size. A
+    # KD-tree gives the same numbers in O(N log N).
+
     def step_reward(self, pos, vel, prev_pos, prev_vel, ctx):
-        # Per-agent reward = distance to 3rd nearest neighbor (proxy for spread)
-        if pos.shape[0] < 4:
-            return np.zeros(pos.shape[0])
-        # Sample subset for O(N*k) — full pairwise is too slow at scale
+        # Per-agent reward = distance to the 3rd-nearest neighbour (spread proxy).
         n = pos.shape[0]
+        if n < 4:
+            return np.zeros(n)
         k = min(3, n - 1)
-        # Simple but correct: use argpartition
-        diffs = pos[:, None, :] - pos[None, :, :]
-        d = np.linalg.norm(diffs, axis=2)
-        np.fill_diagonal(d, np.inf)
-        part = np.partition(d, k, axis=1)
-        return part[:, k - 1]
+        tree = cKDTree(pos)
+        # k+1 because the first neighbour returned is the point itself (d=0).
+        dists, _ = tree.query(pos, k=k + 1)
+        return dists[:, k]
 
     def terminal_metric(self, trajectory):
         if not trajectory:
@@ -87,10 +107,8 @@ class DispersalScenario(Scenario):
         pos = trajectory[-1]["pos"]
         if pos.shape[0] < 2:
             return 0.0
-        diffs = pos[:, None, :] - pos[None, :, :]
-        d = np.linalg.norm(diffs, axis=2)
-        np.fill_diagonal(d, np.inf)
-        return float(d.min(axis=1).mean())
+        dists, _ = cKDTree(pos).query(pos, k=2)
+        return float(dists[:, 1].mean())  # mean nearest-neighbour distance
 
 
 class RendezvousScenario(Scenario):
@@ -182,25 +200,57 @@ class LeaderFollowerScenario(Scenario):
 
 
 class ByzantineScenario(Scenario):
-    """Adversary injection: some fraction of agents emit garbage intents.
+    """Adversary injection: a fraction of agents emit garbage intents.
 
-    The scenario itself doesn't corrupt state — it just wraps a base
-    scenario (here: rendezvous) and reports how much the metric degrades
-    vs a clean run. The corruption is modeled by the harness as
-    randomized actions for the marked agents.
+    Wraps rendezvous and measures how far the metric degrades when ``k%`` of the
+    agents ignore the policy and act adversarially. The corruption is applied in
+    :meth:`corrupt_actions`, which the harness calls on every step *after* the
+    baseline has chosen its actions — so an agent's command is replaced, not its
+    state, which is what "emits a garbage intent" means.
+
+    This used to be a no-op. The scenario computed ``byzantine_indices`` and
+    NOTHING READ THEM: the harness never corrupted anyone, so the "byzantine" row
+    of the leaderboard was a plain rendezvous run under a different label — a
+    benchmark that reported robustness nobody had tested.
+
+    ``adversary``:
+      * ``"random"``   — uniform garbage in [-scale, scale]. The classic model.
+      * ``"inverted"`` — the exact negation of the honest command. Strictly worse
+        than random for a consensus task: it is the *worst-case* adversary that a
+        rational attacker with knowledge of the policy would actually play.
     """
     name = "byzantine"
     success_criterion = "rendezvous metric under k% byzantine agents"
 
-    def __init__(self, byzantine_fraction: float = 0.1):
+    def __init__(self, byzantine_fraction: float = 0.1,
+                 adversary: str = "random", scale: float = 10.0):
+        if not 0.0 <= byzantine_fraction <= 1.0:
+            raise ValueError(f"byzantine_fraction must be in [0,1], got {byzantine_fraction}")
+        if adversary not in ("random", "inverted"):
+            raise ValueError(f"unknown adversary {adversary!r} (random|inverted)")
         self.byzantine_fraction = byzantine_fraction
+        self.adversary = adversary
+        self.scale = float(scale)
+        self.byzantine_indices = np.array([], dtype=int)
         self._inner = RendezvousScenario()
 
     def init_state(self, rng, num_agents, bound):
         pos, vel = self._inner.init_state(rng, num_agents, bound)
         k = int(num_agents * self.byzantine_fraction)
-        self.byzantine_indices = rng.choice(num_agents, size=k, replace=False) if k > 0 else np.array([], dtype=int)
+        self.byzantine_indices = (rng.choice(num_agents, size=k, replace=False)
+                                  if k > 0 else np.array([], dtype=int))
         return pos, vel
+
+    def corrupt_actions(self, accel, rng, ctx):
+        if self.byzantine_indices.size == 0:
+            return accel
+        accel = np.array(accel, dtype=float, copy=True)
+        idx = self.byzantine_indices
+        if self.adversary == "inverted":
+            accel[idx] = -accel[idx]
+        else:
+            accel[idx] = rng.uniform(-self.scale, self.scale, size=(idx.size, accel.shape[1]))
+        return accel
 
     def step_reward(self, pos, vel, prev_pos, prev_vel, ctx):
         return self._inner.step_reward(pos, vel, prev_pos, prev_vel, ctx)

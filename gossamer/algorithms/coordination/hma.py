@@ -202,3 +202,16 @@ def mmc_metrics(lam: float, mu: float, c: int) -> dict:
     Wq = Lq / lam if lam > 0 else 0.0
     W = Wq + 1.0 / mu
     return {"rho": rho, "p_wait": p_wait, "Lq": Lq, "Wq": Wq, "W": W}
+
+
+# `hma.py` had no __all__, unlike every other module here — an oversight worth
+# fixing now that the package is public (the N2 moat).
+__all__ = [
+    "DepotInventory",
+    "HMAParams",
+    "bid_utility",
+    "energy_aware_auction",
+    "erlang_c",
+    "mmc_metrics",
+    "soc_sigmoid",
+]

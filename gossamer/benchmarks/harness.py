@@ -106,6 +106,12 @@ def run_benchmark(
         for step in range(config.steps):
             ctx = ScenarioContext(step=step, total_steps=config.steps, dt=config.dt)
             accel = baseline(pos, vel, rng)
+            # The adversary acts on the COMMAND, not the state: a Byzantine agent
+            # emits a garbage intent, it does not teleport. Identity for every
+            # honest scenario. This call is what makes ByzantineScenario real —
+            # without it the scenario marked its adversaries and nobody read the
+            # marks, so the "byzantine" leaderboard row was plain rendezvous.
+            accel = scenario.corrupt_actions(accel, rng, ctx)
             pos, vel = engine.step(sim_id, accel)
             pos = np.asarray(pos, dtype=float)
             vel = np.asarray(vel, dtype=float)

@@ -88,21 +88,26 @@ def coverage_walker(noise_scale: float = 0.5) -> Baseline:
 
     Keeps per-agent heading and perturbs it lightly each step. Better
     than pure random on coverage because agents don't stop moving.
+
+    The heading state used to be keyed on ``id(pos)``. CPython recycles the id of
+    a freed object, so a later run whose position array landed at the same address
+    silently inherited the PREVIOUS run's headings — a cross-run state leak that
+    would show up as an unreproducible coverage number. The closure holds one
+    heading array instead; a fresh baseline is built per run (``DEFAULT_BASELINES``
+    maps to factories), so per-closure state is per-run state.
     """
-    state: dict = {}
+    headings: dict = {"h": None}
 
     def _f(pos, vel, rng):
-        key = id(pos)
-        headings = state.get(key)
-        if headings is None or headings.shape != pos.shape:
-            headings = rng.normal(size=pos.shape)
-            headings /= np.linalg.norm(headings, axis=1, keepdims=True) + 1e-9
-            state[key] = headings
+        h = headings["h"]
+        if h is None or h.shape != pos.shape:
+            h = rng.normal(size=pos.shape)
+            h /= np.linalg.norm(h, axis=1, keepdims=True) + 1e-9
         # Small heading perturbation
-        headings += rng.normal(scale=noise_scale, size=pos.shape)
-        headings /= np.linalg.norm(headings, axis=1, keepdims=True) + 1e-9
-        state[key] = headings
-        return headings
+        h = h + rng.normal(scale=noise_scale, size=pos.shape)
+        h /= np.linalg.norm(h, axis=1, keepdims=True) + 1e-9
+        headings["h"] = h
+        return h
     return _f
 
 
