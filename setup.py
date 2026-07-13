@@ -5,7 +5,7 @@ setup(
     # Artifact Registry REFUSES to overwrite an existing version, so a forgotten
     # bump here silently republishes nothing and ships a stale wheel. Keep in step
     # with maneuver-map/scripts/versions.env (check_versions.sh asserts it).
-    version="0.7.0",
+    version="0.8.0",
     description="Gossamer Threaded Intelligence: swarm coordination algorithms + swappable DCC primitives, a unified coordination-task/quality API, peer-state predictors, graph-based message-passing policies, information-theoretic + criticality metrics, a MARL toolkit, and the Arboria Swarm Benchmark.",
     author="Arboria Labs",
     license="MIT",

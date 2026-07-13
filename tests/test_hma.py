@@ -8,9 +8,11 @@ from gossamer.algorithms.coordination.hma import (
     DepotInventory,
     HMAParams,
     bid_utility,
+    depot_steering_accel,
     energy_aware_auction,
     erlang_c,
     mmc_metrics,
+    ring_depots,
     soc_sigmoid,
 )
 
@@ -117,3 +119,63 @@ def test_mmc_overload_is_infinite():
     m = mmc_metrics(lam=2.0, mu=1.0, c=1)
     assert m["rho"] >= 1.0
     assert math.isinf(m["Lq"])
+
+
+# --------------------------------------------------------------------------
+# Steering — the half of the market that turns an assignment into motion.
+#
+# This migrated out of maneuver-map's `policies.py`, where it was the last piece
+# of the market living in the orchestration layer. It is the code path whose
+# "harmless" vectorisation moved the paper's published +29% headline, so the tests
+# below pin the two things a future optimiser would break: WHO gets overridden,
+# and the exact unit-direction each assigned hauler is given.
+# --------------------------------------------------------------------------
+
+def test_depot_steering_points_assigned_haulers_at_their_depot():
+    depots = np.array([[10.0, 0.0, 0.0], [-10.0, 0.0, 0.0]])
+    pos = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+    accel = np.zeros((2, 3))
+    assignment = np.array([0, 1])
+
+    out = depot_steering_accel(accel, pos, depots, assignment)
+
+    assert np.allclose(out[0], [1.0, 0.0, 0.0])    # unit vector toward depot 0
+    assert np.allclose(out[1], [-1.0, 0.0, 0.0])   # unit vector toward depot 1
+    assert np.allclose(np.linalg.norm(out, axis=1), 1.0)
+
+
+def test_depot_steering_leaves_unassigned_agents_alone():
+    """An unassigned agent keeps its flocking accel — the market only moves who it cleared.
+
+    If this regressed, every non-hauler in the swarm would be silently zeroed or
+    dragged to a depot, and the fleet's throughput would change for a reason that
+    has nothing to do with the scheduler under test.
+    """
+    depots = np.array([[10.0, 0.0, 0.0]])
+    pos = np.zeros((3, 3))
+    flocking = np.array([[0.5, 0.5, 0.0], [1.0, 0.0, 0.0], [0.0, 2.0, 0.0]])
+    assignment = np.array([-1, 0, -1])
+
+    out = depot_steering_accel(flocking.copy(), pos, depots, assignment)
+
+    assert np.allclose(out[0], flocking[0])        # untouched
+    assert np.allclose(out[2], flocking[2])        # untouched
+    assert np.allclose(out[1], [1.0, 0.0, 0.0])    # overridden by the market
+
+
+def test_depot_steering_is_stable_for_a_hauler_sitting_on_its_depot():
+    """Zero distance must not produce a NaN. The 1e-9 guard is load-bearing."""
+    depots = np.array([[0.0, 0.0, 0.0]])
+    pos = np.zeros((1, 3))
+    out = depot_steering_accel(np.zeros((1, 3)), pos, depots, np.array([0]))
+    assert np.isfinite(out).all()
+
+
+def test_ring_depots_are_evenly_spaced_and_symmetric():
+    """No scheduler should be able to win by exploiting an accident of the layout."""
+    d = ring_depots(6, bound=100.0)
+    assert d.shape == (6, 3)
+    assert np.allclose(d[:, 2], 0.0)                       # all in the z=0 plane
+    r = np.linalg.norm(d[:, :2], axis=1)
+    assert np.allclose(r, 60.0)                            # 0.6 * bound
+    assert np.allclose(d.sum(axis=0), 0.0, atol=1e-9)      # centroid at the origin

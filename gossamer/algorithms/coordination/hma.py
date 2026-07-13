@@ -163,6 +163,58 @@ def energy_aware_auction(
 
 
 # --------------------------------------------------------------------------
+# Steering: what a hauler does once the auction has assigned it
+# --------------------------------------------------------------------------
+
+def depot_steering_accel(
+    accel: np.ndarray,
+    pos: np.ndarray,
+    depots: np.ndarray,
+    assignment: np.ndarray,
+) -> np.ndarray:
+    """Point each *assigned* hauler at its depot; leave everyone else alone.
+
+    The auction decides WHO goes WHERE; this is the other half of the market — the
+    part that turns an assignment into motion. Unassigned agents keep whatever
+    acceleration they came in with (their flocking term), so the market only ever
+    overrides the agents it actually cleared.
+
+    Mutates and returns ``accel``.
+
+    ⚠️ THE LOOP IS DELIBERATE. DO NOT VECTORISE IT.
+    This is a unit-norm direction per assigned hauler, and it is trivially
+    expressible as an array operation — which is exactly the trap. The HMA
+    published headline (+29% vs FCFS) moved and shipped because a distance
+    computation on this code path was "harmlessly" vectorised from a scan over
+    ``np.hypot`` distances into a reduction over squared distances: mathematically
+    the same ordering, different floating-point ties, one flipped depot assignment,
+    and a chaotic cascade over 8,000 steps. The published batch is now only
+    reproducible on the 0.6.0 wheel. `scripts/hma_fingerprint.py` locks this path
+    precisely so the next such change is caught; a speedup here that trips the lock
+    is not a speedup, it is a new experiment.
+    """
+    n = pos.shape[0]
+    for i in range(n):
+        if assignment[i] >= 0:
+            d = depots[assignment[i]] - pos[i]
+            nrm = np.linalg.norm(d) + 1e-9
+            accel[i] = d / nrm
+    return accel
+
+
+def ring_depots(count: int, bound: float) -> np.ndarray:
+    """``count`` depots on a ring at 0.6·bound, in the z=0 plane.
+
+    The default depot placement: evenly spaced, deterministic, and symmetric, so
+    no scheduler can win by exploiting an accident of the layout.
+    """
+    ang = np.linspace(0, 2 * np.pi, count, endpoint=False)
+    return np.stack(
+        [0.6 * bound * np.cos(ang), 0.6 * bound * np.sin(ang), np.zeros(count)], axis=1
+    )
+
+
+# --------------------------------------------------------------------------
 # M/M/c queueing (the decoupling result)
 # --------------------------------------------------------------------------
 
@@ -210,8 +262,10 @@ __all__ = [
     "DepotInventory",
     "HMAParams",
     "bid_utility",
+    "depot_steering_accel",
     "energy_aware_auction",
     "erlang_c",
     "mmc_metrics",
+    "ring_depots",
     "soc_sigmoid",
 ]

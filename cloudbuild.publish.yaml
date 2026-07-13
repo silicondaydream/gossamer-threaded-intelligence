@@ -52,6 +52,7 @@ steps:
             'gossamer.prediction.baselines',
             'gossamer.engine',
             'gossamer.algorithms.coordination.kernels',
+            'gossamer.algorithms.coordination.baselines',
         ):
             __import__(mod)
         # Symbol-level checks: importing a module cannot catch a function that
@@ -61,6 +62,21 @@ steps:
         # policies.py imports these instead of reimplementing them (M6.6).
         from gossamer.algorithms.coordination.kernels import (  # noqa: F401
             boids_accel_edges, kdtree_edges,
+        )
+        # gossamer 0.8: the LAST algorithms to leave the runner. TF-ACO's dense-grid
+        # stigmergy, HMA's depot steering, and the Levy/greedy DMB comparators all
+        # lived in maneuver-map's policies.py — algorithm code in the orchestration
+        # layer, which is the defect the extraction was meant to end and which had
+        # quietly regrown. policies.py imports them at module scope now, so a wheel
+        # without them breaks the runner, not this build. Assert them here.
+        from gossamer.algorithms.coordination.baselines import (  # noqa: F401
+            CoverageGrid, LevyState, greedy_coverage_accel, levy_flight_accel,
+        )
+        from gossamer.algorithms.coordination.tfaco import (  # noqa: F401
+            DensePheromoneGrid, tfaco_accel,
+        )
+        from gossamer.algorithms.coordination.hma import (  # noqa: F401
+            depot_steering_accel, ring_depots,
         )
         # The benchmark harness steps through this, not a private copy (M6.7).
         from gossamer.engine import PhysicsEngine, ReferenceEngine  # noqa: F401

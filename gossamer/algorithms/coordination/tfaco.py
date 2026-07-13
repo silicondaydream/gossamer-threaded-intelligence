@@ -174,3 +174,113 @@ def tfaco_step(
     new_pos = positions + new_vel * dt
     info = {"pheromone": per_pher, "coverage": field.coverage()}
     return new_pos, new_vel, info
+
+
+# ---------------------------------------------------------------------------
+# The dense-grid kernel: the TF-ACO the experiments actually run.
+# ---------------------------------------------------------------------------
+class DensePheromoneGrid:
+    """The vectorised, dense-array twin of :class:`PheromoneField`.
+
+    WHY BOTH EXIST, and why this is not a duplicate to be merged away.
+    ``PheromoneField`` is the CRDT: sparse per-cell ``GCounter`` deposits and an
+    LWW clock, which is what makes the paper's "the coverage map reconciles
+    without a leader" claim a *proof* rather than a promise. Its convergence is
+    what the unit tests cover. But its deposits are a per-cell Python dict, so
+    ``tfaco_step`` walks a per-agent Python loop and cannot run the N=128k ladder.
+
+    The single-process runner has exactly ONE replica, and on one replica a CRDT
+    reduces to its underlying value -- so the experiments run this: the same
+    ``tau = deposits * exp(-lambda * dt_since)`` law on dense arrays, with the
+    window search vectorised across agents. The CRDT stays for the convergence
+    proof; this carries the numbers.
+
+    This kernel lived in Maneuver.Map's ``policies.py`` as ``_tfaco_accel``, which
+    is exactly the fork the kernels module exists to end: the algorithm was in the
+    orchestration layer, and the layer that owns algorithms held only a version
+    nothing executed. Moved here BYTE-FOR-BYTE -- same reduction order, same
+    ``np.add.at`` accumulation, same window scan. Reordering any of it would
+    perturb published numbers, which is not a theoretical risk in this codebase:
+    it is precisely how the HMA headline moved (a scan over distances became a
+    reduction over squared distances, the fp ties flipped, and a published result
+    changed). Do not "optimise" this during a move.
+
+    HOLDING ONLY THE GRIDS IS DELIBERATE. The runner used to keep a live
+    ``PheromoneField`` beside this kernel, and it was a corpse: the vectorised
+    path deposits into the dense grid and never touched the CRDT, so its
+    ``deposits`` dict stayed empty and ``coverage()`` returned 0.0 forever -- an
+    object that looked live and read as a real measurement. ``coverage()`` here
+    reads the grid that is actually written, so it cannot go hollow.
+    """
+
+    def __init__(self, params: TFACOParams, t0: float = 0.0) -> None:
+        gh, gw = int(params.grid_h), int(params.grid_w)
+        self.params = params
+        self.deposits = np.zeros((gh, gw), dtype=float)
+        self.last_t = np.full((gh, gw), float(t0), dtype=float)
+
+    def coverage(self) -> float:
+        """Fraction of cells that have received at least one deposit."""
+        if self.deposits.size == 0:
+            return 0.0
+        return float(np.count_nonzero(self.deposits) / self.deposits.size)
+
+
+def tfaco_accel(
+    pos: np.ndarray,
+    vel: np.ndarray,
+    dt: float,
+    t: float,
+    grid: DensePheromoneGrid,
+    *,
+    max_speed: float = 5.0,
+    max_accel: float = 1.0,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Vectorised TF-ACO stigmergic coverage on a dense pheromone grid.
+
+    Deposits into ``grid`` at each agent's cell, decays, then steers every agent
+    toward the lowest-score cell (pheromone + distance penalty) in its local
+    window. Only the x/y plane is steered; z is untouched, so this composes with a
+    3-D base flocking term.
+
+    Mutates ``grid`` in place. Returns ``(accel (N,3), per_agent_pheromone (N,))``.
+    """
+    p = grid.params
+    gh, gw, b = int(p.grid_h), int(p.grid_w), float(p.bound)
+    dep = grid.deposits
+    last_t = grid.last_t
+    t = float(t)
+    n = pos.shape[0]
+    cx = np.clip(((pos[:, 0] + b) / (2 * b) * gw).astype(np.intp), 0, gw - 1)
+    cy = np.clip(((pos[:, 1] + b) / (2 * b) * gh).astype(np.intp), 0, gh - 1)
+    q = float(max(1, int(round(p.deposit_rate))))
+    np.add.at(dep, (cy, cx), q)
+    last_t[cy, cx] = t
+    tau = dep * np.exp(-p.evap_lambda * np.maximum(0.0, t - last_t))
+    per_pher = tau[cy, cx]
+    w = int(p.window)
+    best_score = np.full(n, np.inf)
+    best_jy = cy.copy()
+    best_jx = cx.copy()
+    for dy in range(-w, w + 1):
+        for dx in range(-w, w + 1):
+            jy = np.clip(cy + dy, 0, gh - 1)
+            jx = np.clip(cx + dx, 0, gw - 1)
+            score = tau[jy, jx] + p.heuristic_weight * np.hypot(jx - cx, jy - cy)
+            better = score < best_score
+            best_score = np.where(better, score, best_score)
+            best_jy = np.where(better, jy, best_jy)
+            best_jx = np.where(better, jx, best_jx)
+    tx = (best_jx + 0.5) / gw * (2 * b) - b
+    ty = (best_jy + 0.5) / gh * (2 * b) - b
+    dirx = tx - pos[:, 0]
+    diry = ty - pos[:, 1]
+    norm = np.sqrt(dirx * dirx + diry * diry) + 1e-9
+    new_vel = vel.copy()
+    new_vel[:, 0] += (dirx / norm) * max_accel * dt
+    new_vel[:, 1] += (diry / norm) * max_accel * dt
+    spd = np.linalg.norm(new_vel, axis=1)
+    fast = spd > max_speed
+    if np.any(fast):
+        new_vel[fast] = new_vel[fast] / spd[fast, None] * max_speed
+    return (new_vel - vel) / max(dt, 1e-9), per_pher

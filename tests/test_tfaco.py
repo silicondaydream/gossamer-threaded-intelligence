@@ -1,9 +1,12 @@
 """Tests for gossamer.algorithms.coordination.tfaco."""
 import numpy as np
+import pytest
 
 from gossamer.algorithms.coordination.tfaco import (
+    DensePheromoneGrid,
     PheromoneField,
     TFACOParams,
+    tfaco_accel,
     tfaco_step,
 )
 
@@ -78,3 +81,96 @@ def test_step_deposits_and_reports_pheromone():
     assert info["coverage"] > 0.0
     assert info["pheromone"].shape == (5,)
     assert np.all(info["pheromone"] > 0.0)  # everyone deposited on their cell
+
+
+# --------------------------------------------------------------------------
+# The dense-grid kernel — the TF-ACO the experiments actually run.
+#
+# Two implementations of one law is a liability unless something holds them to
+# each other. `PheromoneField` is the CRDT (sparse, per-agent loop, proves
+# convergence); `DensePheromoneGrid` is the vectorised twin that carries the
+# numbers. The runner used to hold the fast one privately, and the two were kept
+# in agreement by a docstring. These tests are what replace the docstring.
+# --------------------------------------------------------------------------
+
+def test_dense_grid_matches_the_crdt_field_on_one_replica():
+    """The dense kernel must compute the SAME tau law as the CRDT it stands in for.
+
+    This is the entire justification for having two implementations: on a single
+    replica a CRDT reduces to its value, so the fast path is only legitimate if it
+    lands on the same field. If this drifts, every TF-ACO number in the stack is
+    produced by something with no proof behind it.
+    """
+    p = _params(grid_w=16, grid_h=16, deposit_rate=1.0)
+    rng = np.random.default_rng(0)
+    pos = rng.uniform(-90, 90, size=(25, 3))
+    pos[:, 2] = 0.0
+
+    grid = DensePheromoneGrid(p, t0=0.0)
+    field = PheromoneField(p)
+
+    t = 4.0
+    # Dense path: one deposit+decay pass at time t.
+    tfaco_accel(pos, np.zeros_like(pos), 0.1, t, grid)
+    # CRDT path: the same deposits, one per agent, at the same time.
+    for a in range(pos.shape[0]):
+        field.deposit(field.cell_of(pos[a, :2]), a, t)
+
+    assert np.allclose(grid.deposits, field.dense_grid(t), atol=1e-12)
+
+
+def test_dense_grid_decays_with_the_same_exponential_law():
+    p = _params(evap_lambda=0.5)
+    grid = DensePheromoneGrid(p, t0=0.0)
+    pos = np.zeros((1, 3))
+    tfaco_accel(pos, np.zeros_like(pos), 0.1, 0.0, grid)
+
+    cy, cx = np.nonzero(grid.deposits)
+    deposited = float(grid.deposits[cy[0], cx[0]])
+    # tau at a later time, with no further deposit, is the decayed mass.
+    age = 3.0
+    expected = deposited * np.exp(-p.evap_lambda * age)
+    tau = grid.deposits * np.exp(
+        -p.evap_lambda * np.maximum(0.0, age - grid.last_t)
+    )
+    assert tau[cy[0], cx[0]] == pytest.approx(expected)
+
+
+def test_dense_grid_coverage_reads_the_grid_that_is_written():
+    """`coverage()` must not be able to go hollow.
+
+    The runner previously kept a live `PheromoneField` beside the dense kernel and
+    asked IT for coverage — but the kernel deposits into the dense array and never
+    touched the CRDT, so its deposits dict stayed empty and coverage() returned 0.0
+    forever. A number that is always zero and never raises is the house failure
+    mode: it reads as a measurement.
+    """
+    p = _params(grid_w=16, grid_h=16)
+    grid = DensePheromoneGrid(p)
+    assert grid.coverage() == 0.0
+
+    rng = np.random.default_rng(1)
+    pos = rng.uniform(-90, 90, size=(30, 3))
+    pos[:, 2] = 0.0
+    tfaco_accel(pos, np.zeros_like(pos), 0.1, 1.0, grid)
+    assert grid.coverage() > 0.0
+
+
+def test_dense_grid_steers_only_in_the_xy_plane():
+    """z is left to the base flocking term; TF-ACO is a ground-plane policy."""
+    p = _params()
+    grid = DensePheromoneGrid(p)
+    rng = np.random.default_rng(2)
+    pos = rng.uniform(-90, 90, size=(10, 3))
+    vel = rng.normal(0, 1, size=(10, 3))
+    accel, _pher = tfaco_accel(pos, vel, 0.1, 0.0, grid, max_speed=1e9)
+    assert np.allclose(accel[:, 2], 0.0)
+
+
+def test_dense_grid_reports_per_agent_pheromone():
+    p = _params()
+    grid = DensePheromoneGrid(p)
+    pos = np.zeros((5, 3))          # all agents in one cell -> they stack deposits
+    _accel, pher = tfaco_accel(pos, np.zeros_like(pos), 0.1, 0.0, grid)
+    assert pher.shape == (5,)
+    assert np.all(pher > 0.0)
