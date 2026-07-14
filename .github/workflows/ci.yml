@@ -1,25 +1,67 @@
+# Gossamer's suite, enforced on push. (Roadmap 0.3.)
+#
+# Gossamer is the one repo whose CI was already honest: it installed both optional
+# comparators by hand, so all 292 tests genuinely ran and nothing skipped. That was
+# verified in a clean venv, not assumed. Two things change here, and neither is cosmetic:
+#
+#   1. The extras are installed FROM `extras_require`, not from a hand-copied list. The
+#      package already declares what the comparators need (`[milp]` -> ortools,
+#      `[learning]` -> torch, `[bench]` -> tabulate); a workflow that re-lists them is a
+#      second source of truth, and second sources of truth in this stack drift and then
+#      quietly subtract a test. torch is the one exception, pinned to the CPU index --
+#      see below.
+#   2. `ARBORIA_REQUIRE_TESTS=1` (see tests/conftest.py) makes any skip a FAILURE, the
+#      Python analogue of leviathan-engine's `-DLEVIATHAN_REQUIRE_TESTS=ON`. Nothing skips
+#      today; this is what keeps that true. The failure it guards against is the
+#      `importorskip` added next year beside a dependency this job never learns about,
+#      which would subtract a test from CI without subtracting anything from the green tick.
+#
+# Gossamer ships as the wheel the papers pin, and as of 0.8.0 it owns the algorithms that
+# used to hide in the runner. A number that moves here moves everywhere downstream.
 name: CI
 
 on:
   push:
+    branches: ["**"]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+  tests:
+    name: gossamer · py${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
-      - name: Install package + test deps
+      - name: Install package + every optional comparator
         run: |
           python -m pip install --upgrade pip
-          pip install -e .                       # pulls numpy/scipy/networkx/pandas/sklearn
-          pip install pytest ortools             # ortools for the MILP baseline tests
-          pip install torch --index-url https://download.pytorch.org/whl/cpu  # learning tests
+          # torch FIRST, from the CPU index: the default PyPI wheel for Linux is the CUDA
+          # build (~2 GB) and there is no GPU on this runner. Installing it up front means
+          # the `[all]` extra below finds torch already satisfied and will not re-resolve it.
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          # `[all]` = torch + ortools + tabulate, straight from setup.py's extras_require.
+          # The learning and MILP baselines are gated on these; without them their tests do
+          # not fail, they disappear.
+          python -m pip install -e ".[all]"
+          python -m pip install pytest
 
-      - name: Run test suite
-        run: pytest -q
+      # A skip here means an extra failed to install, or someone added an importorskip.
+      # Both are bugs in this job. -rs prints the reasons if it ever does happen.
+      - name: Run the suite (a skip is a failure)
+        env:
+          ARBORIA_REQUIRE_TESTS: "1"
+        run: python -m pytest -q -rs
