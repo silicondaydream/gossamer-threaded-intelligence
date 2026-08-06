@@ -16,12 +16,21 @@ Scenarios (:mod:`gossamer.benchmarks.scenarios`, registry ``ALL_SCENARIOS``):
   the swarm stay within a given distance?
 * ``byzantine`` — a fraction of agents emit garbage intents (the harness replaces
   their commands via :meth:`Scenario.corrupt_actions`); measure robustness.
+* ``vicsek_transition`` — SUBSTRATE VALIDATION, absorbed from the archived DMB
+  work: does this substrate reproduce the known noise-driven order-disorder
+  transition at all? Run with ``vicsek_alignment``; a substrate that cannot
+  order has no business reporting coordination numbers. Explicitly not a
+  criticality study (no exponents, no finite-size scaling) — that line is the
+  one DMB's abstract crossed.
 
 Baselines (:mod:`gossamer.benchmarks.baselines`, registry ``DEFAULT_BASELINES``):
 
 * ``random`` — uniform random accelerations (lower bound).
 * ``greedy`` — hand-crafted greedy solution per scenario.
 * ``gossamer_flocking`` — the classical Boids policy from the shared kernels.
+* ``vicsek_alignment`` — constant-speed heading alignment. The only baseline that
+  polarises: Boids pulls agents toward a common centre, so its headings point
+  inward and cancel (anti-polar by symmetry, psi ~ 0.05 at every gain).
 
 Use :func:`run_benchmark` / :func:`leaderboard` to execute and compare, and
 :func:`generate_leaderboard_md` to emit the paper-ready table. Both take an
@@ -37,7 +46,11 @@ anyone — the scenario marked its adversaries and nothing read the marks.
 """
 from __future__ import annotations
 
-from gossamer.benchmarks.baselines import DEFAULT_BASELINES, Baseline
+from gossamer.benchmarks.baselines import (
+    DEFAULT_BASELINES,
+    Baseline,
+    vicsek_alignment,
+)
 from gossamer.benchmarks.harness import (
     BenchmarkConfig,
     BenchmarkResult,
@@ -51,6 +64,7 @@ __all__ = [
     "ALL_SCENARIOS",
     "DEFAULT_BASELINES",
     "Baseline",
+    "vicsek_alignment",
     "BenchmarkConfig",
     "BenchmarkResult",
     "Scenario",

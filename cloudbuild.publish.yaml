@@ -102,10 +102,11 @@ steps:
             generate_leaderboard_md, leaderboard, run_benchmark,
         )
         assert set(ALL_SCENARIOS) == {
-            "dispersal", "rendezvous", "coverage", "leader_follower", "byzantine"
+            "dispersal", "rendezvous", "coverage", "leader_follower", "byzantine",
+            "vicsek_transition",
         }, ALL_SCENARIOS
         assert set(DEFAULT_BASELINES) == {
-            "random", "gossamer_flocking", "greedy"
+            "random", "gossamer_flocking", "greedy", "vicsek_alignment"
         }, DEFAULT_BASELINES
 
         # ByzantineScenario was a NO-OP: it marked its adversaries and the harness

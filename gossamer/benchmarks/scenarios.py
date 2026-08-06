@@ -259,12 +259,88 @@ class ByzantineScenario(Scenario):
         return self._inner.terminal_metric(trajectory)
 
 
+class VicsekTransitionScenario(Scenario):
+    """DMB absorbed: the order-disorder transition as HARNESS VALIDATION.
+
+    The DMB paper is archived because its abstract claimed Vicsek-class 3-D
+    exponents from a custom engine — the honest-scoping trap. What survives it
+    is the *validation move*: a substrate that cannot reproduce the known
+    order-disorder transition has no business reporting coordination numbers.
+    This scenario is that check as a permanent benchmark row.
+
+    ``noise_eta`` scales an actuator perturbation applied through
+    :meth:`corrupt_actions` (the same hook the Byzantine adversary uses — noise
+    tampers with COMMANDS, not state). The metric is the polarization order
+    parameter ``psi = |sum(v_i/|v_i|)| / N``, time-averaged over the final
+    quarter of the run so it reads the (quasi-)steady state, not the ordering
+    transient.
+
+    **Run it with :func:`~gossamer.benchmarks.baselines.vicsek_alignment`** —
+    the constant-speed baseline. Measured on `ReferenceEngine` at N=200,
+    bound=22, R=10: psi 0.999 / 0.971 / 0.670 / 0.091 at eta 0 / 1 / 4 / 16,
+    against a disordered floor of 1/sqrt(N) = 0.071. A substrate that cannot
+    reproduce that has no business reporting coordination numbers, whatever
+    its other rows say.
+
+    **Boids does NOT order here, and that is not a substrate defect.**
+    `gossamer_flocking` never leaves psi ~ 0.05 at any alignment gain, because
+    it pulls every agent toward a common centre — headings then point inward
+    from all directions, which is anti-polar by symmetry. A cohesive swarm and
+    a polarised flock are different states; only the second has a transition.
+    (Second footgun found the same way: `flock_step`'s weights are
+    dimensionless gains applied with no ``dt``, so alignment >= 2 overshoots
+    and oscillates — turning alignment up gets LESS order.)
+
+    This is deliberately NOT a criticality study: no exponents, no
+    finite-size scaling, no claims about the transition's order. Those need an
+    N-ladder and `gossamer.metrics.criticality`, and they belong to a paper,
+    not a smoke-check — which is exactly the line the archived DMB abstract
+    crossed.
+    """
+    name = "vicsek_transition"
+    success_criterion = "steady-state polarization psi (order parameter)"
+
+    def __init__(self, noise_eta: float = 0.0):
+        if noise_eta < 0.0:
+            raise ValueError(f"noise_eta must be >= 0, got {noise_eta}")
+        self.noise_eta = float(noise_eta)
+
+    def init_state(self, rng, num_agents, bound):
+        pos = rng.uniform(-bound, bound, size=(num_agents, 3))
+        # Unit-speed random headings: the disordered state psi ~ N^-1/2.
+        vel = rng.normal(size=(num_agents, 3))
+        vel /= np.linalg.norm(vel, axis=1, keepdims=True) + 1e-9
+        return pos, vel
+
+    def corrupt_actions(self, accel, rng, ctx):
+        if self.noise_eta == 0.0:
+            return accel
+        return accel + rng.uniform(-self.noise_eta, self.noise_eta,
+                                   size=accel.shape)
+
+    @staticmethod
+    def _psi(vel: np.ndarray) -> float:
+        speed = np.linalg.norm(vel, axis=1, keepdims=True)
+        headings = vel / np.maximum(speed, 1e-9)
+        return float(np.linalg.norm(headings.mean(axis=0)))
+
+    def step_reward(self, pos, vel, prev_pos, prev_vel, ctx):
+        return np.full(pos.shape[0], self._psi(vel))
+
+    def terminal_metric(self, trajectory):
+        if not trajectory:
+            return 0.0
+        tail = trajectory[-max(1, len(trajectory) // 4):]
+        return float(np.mean([self._psi(snap["vel"]) for snap in tail]))
+
+
 ALL_SCENARIOS = {
     "dispersal": DispersalScenario,
     "rendezvous": RendezvousScenario,
     "coverage": CoverageScenario,
     "leader_follower": LeaderFollowerScenario,
     "byzantine": ByzantineScenario,
+    "vicsek_transition": VicsekTransitionScenario,
 }
 
 

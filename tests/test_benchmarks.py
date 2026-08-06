@@ -153,3 +153,85 @@ def test_leaderboard_runs_the_matrix_and_renders():
     assert len(results) == 4
     md = generate_leaderboard_md(results)
     assert "rendezvous" in md and "byzantine" in md
+
+
+# --- vicsek_transition: the substrate-validation row (DMB absorbed) ----------
+
+def _psi_run(eta, steps=400, n=200, bound=22.0, radius=10.0, seed=7):
+    from gossamer.benchmarks.baselines import vicsek_alignment
+    from gossamer.benchmarks.scenarios import VicsekTransitionScenario
+
+    sc = VicsekTransitionScenario(noise_eta=eta)
+    cfg = BenchmarkConfig(num_agents=n, steps=steps, dt=0.1, bound=bound,
+                          seed=seed, record_trajectory=True)
+    return run_benchmark(sc, vicsek_alignment(speed=0.5, neighbor_radius=radius,
+                                              dt=0.1), cfg,
+                         baseline_name="vicsek_alignment").metric
+
+
+def test_substrate_reproduces_the_order_disorder_transition():
+    """THE validation row: order at low noise, disorder at high noise.
+
+    If this fails, the substrate cannot reproduce a transition every swarm
+    textbook contains, and no coordination number measured on it means
+    anything. Measured 2026-08-06 on ReferenceEngine: psi 0.999 / 0.971 /
+    0.670 / 0.091 at eta 0 / 1 / 4 / 16.
+    """
+    ordered = _psi_run(0.0)
+    mid = _psi_run(4.0)
+    disordered = _psi_run(16.0)
+
+    assert ordered > 0.9, f"noiseless swarm failed to polarise (psi={ordered:.3f})"
+    # The disordered floor is 1/sqrt(N) = 0.071 for N=200; allow headroom.
+    assert disordered < 0.25, f"noise failed to destroy order (psi={disordered:.3f})"
+    assert disordered < mid < ordered, "no monotone transition between the corners"
+
+
+def test_boids_is_anti_polar_here_and_that_is_not_a_substrate_defect():
+    """Boids must NOT be used as the ordering instrument.
+
+    It pulls every agent toward a common centre, so headings point inward from
+    all directions and cancel by symmetry — a cohesive swarm is not a polarised
+    flock. This test pins the distinction so nobody 'fixes' the validation row
+    by swapping the baseline back and then reads a flat null as a tie.
+    """
+    from gossamer.benchmarks.baselines import gossamer_flocking
+    from gossamer.benchmarks.scenarios import VicsekTransitionScenario
+
+    sc = VicsekTransitionScenario(noise_eta=0.0)
+    cfg = BenchmarkConfig(num_agents=200, steps=300, dt=0.1, bound=22.0,
+                          seed=7, record_trajectory=True)
+    psi = run_benchmark(sc, gossamer_flocking(max_speed=0.5), cfg,
+                        baseline_name="gossamer_flocking").metric
+    assert psi < 0.3, (
+        f"Boids polarised (psi={psi:.3f}) — if this is now true the baseline "
+        "changed; re-derive which instrument the validation row should use")
+
+
+def test_flock_step_alignment_weight_is_a_gain_not_a_rate():
+    """`v += w*(avg - v)` with no dt: w=1 snaps to the mean, w>=2 oscillates.
+
+    The footgun is that turning alignment UP gets LESS order, so a reader
+    tuning for polarisation walks away from it. Pinned because the natural
+    instinct (crank the weight) is the wrong move.
+    """
+    from gossamer.algorithms.coordination.flocking import flock_step
+
+    rng = np.random.default_rng(7)
+    pos = rng.uniform(-22, 22, size=(80, 3))
+    vel = rng.normal(size=(80, 3))
+    vel /= np.linalg.norm(vel, axis=1, keepdims=True)
+
+    def psi_after(weight, steps=60):
+        p, v = pos.copy(), vel.copy()
+        for _ in range(steps):
+            p, v = flock_step(p, v, 0.1, alignment_weight=weight,
+                              cohesion_weight=0.0, separation_weight=0.0,
+                              neighbor_radius=10.0, separation_distance=1.0,
+                              max_speed=0.5, use_spatial=True)
+        h = v / (np.linalg.norm(v, axis=1, keepdims=True) + 1e-9)
+        return float(np.linalg.norm(h.mean(axis=0)))
+
+    assert psi_after(3.0) < psi_after(0.5), (
+        "raising the alignment gain past the stability bound should REDUCE "
+        "order; if it no longer does, flock_step gained a dt factor")

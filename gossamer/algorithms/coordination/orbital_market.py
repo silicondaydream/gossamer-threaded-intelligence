@@ -29,16 +29,22 @@ without touching the mechanism.
 ⚠️ SCOPING — read before citing any number from this module (DOCS §2.2, §3.5,
 standing guardrails #1 and #6):
 
-* **The market is regime-conditional, and one of its regimes is a loss.** The
-  20-seed terrestrial measurement (batch ``hma_remeasure``) found the auction
-  beats FCFS ONLY under scarcity (+33.6% at cap 10), is a null at the published
-  operating point, and is significantly WORSE (-11.2%) when over-provisioned.
+* **The market is regime-conditional. Measure the regime; never assume the
+  terrestrial transfer.** The 20-seed terrestrial measurement (batch
+  ``hma_remeasure``) found the auction beats FCFS ONLY under scarcity, and
+  LOSES when over-provisioned. The 20-seed ORBITAL campaign (2026-08-05,
+  benchmark `orbital-market` v0.1.0) found that structure does NOT transfer
+  wholesale: on an eclipsing constellation, state-blind FCFS loses in EVERY
+  regime, because it parks jobs on unpowered satellites and destroys capacity
+  outright — the abundant-regime tie terrestrial FCFS could fall back on does
+  not exist when the naive scheduler can brown out a bus. What survives is the
+  sharper claim: outside scarcity every state-aware scheduler coincides (any
+  signal suffices); ONLY under scarcity do the mechanisms differentiate — and
+  there the auction trades a few points of throughput for zero brownouts,
+  while a bare SOC-greedy strip-mines the fleet's margin for the extra jobs.
   This module therefore *measures* its own regime — `metrics()` reports the
   offered-load / net-supply energy ratio and a regime label — so every result
-  carries its precondition as data. An orbital compute constellation is power-
-  and thermal-scarce by construction, which is why the scarce regime is the one
-  N1 lives in; but if your workload comes out `abundant`, expect the market to
-  LOSE to FCFS, because that is what it measurably does.
+  carries its precondition as data.
 * **No delay claim.** A 1-km formation is fully connected (< 0.1 ms effective
   delay; the cliff is at 10-20 s). This market assumes every bid is heard the
   step it is made. The delay science belongs to N3 and to the DCC papers.
@@ -285,7 +291,9 @@ def greedy_soc_scheduler(view: MarketView) -> List[Tuple[int, int]]:
 
 
 def cpsat_scheduler(view: MarketView, *, time_budget_s: float = 1.0,
-                    utility_scale: int = 1000) -> List[Tuple[int, int]]:
+                    utility_scale: int = 1000,
+                    solve_stats: Optional[Dict[str, int]] = None
+                    ) -> List[Tuple[int, int]]:
     """The central comparator: CP-SAT maximizing the SAME canonical utility.
 
     Answers the reviewer's question — how far is the decentralized clearing
@@ -330,7 +338,19 @@ def cpsat_scheduler(view: MarketView, *, time_budget_s: float = 1.0,
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = float(time_budget_s)
     solver.parameters.num_search_workers = 1  # keep the search single-threaded
-    solver.Solve(model)
+    status = solver.Solve(model)
+    # A budget-starved solve returns UNKNOWN with NO incumbent, which reads as
+    # "assign nobody" — the central planner silently degrading into a no-op is
+    # exactly the hand-crippled comparator the HMA paper was called out for.
+    # Callers doing a head-to-head must pass `solve_stats` and report the
+    # non-optimal fraction; a comparison where it is large is measuring the
+    # budget, not the mechanism.
+    if solve_stats is not None:
+        key = {cp_model.OPTIMAL: "optimal", cp_model.FEASIBLE: "feasible"}.get(
+            status, "no_solution")
+        solve_stats[key] = solve_stats.get(key, 0) + 1
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return []
     return sorted((q, s) for (q, s), var in x.items() if solver.Value(var) == 1)
 
 
@@ -375,9 +395,12 @@ def scarcity_ratio(jobs: Sequence[Job], illumination: np.ndarray,
 
 
 def regime_label(rho: float) -> str:
-    """Band definitions (definitions, not measurements): the terrestrial
-    result says expect the market to WIN when ``scarce``, tie-or-null when
-    ``contended``, and LOSE when ``abundant``."""
+    """Band definitions (definitions, not measurements). What the bands mean
+    empirically, at n=20 each: terrestrially the market wins only when
+    ``scarce`` and loses when ``abundant``; orbitally FCFS loses everywhere
+    (state-blindness destroys capacity on an eclipsing fleet) and the bands
+    instead mark where the state-aware mechanisms DIFFERENTIATE — they
+    coincide outside ``scarce`` and split inside it."""
     if rho >= 1.0:
         return "scarce"
     if rho >= 0.6:

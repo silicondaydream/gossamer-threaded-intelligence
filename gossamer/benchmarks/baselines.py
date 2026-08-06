@@ -83,6 +83,54 @@ def gossamer_flocking(
     return _f
 
 
+def vicsek_alignment(speed: float = 1.0, neighbor_radius: float = 10.0,
+                     dt: float = 0.1) -> Baseline:
+    """Constant-speed heading alignment — the Vicsek update, as a baseline.
+
+    Each agent steers toward the mean HEADING of its neighbours while holding
+    ``|v| = speed``. That constant-speed constraint is Vicsek's defining
+    property and the reason this exists separately from
+    :func:`gossamer_flocking`: Boids averages velocity *vectors* (magnitude
+    decays and is refilled by the cohesion term) and pulls every agent toward a
+    common centre, which makes headings point inward from all directions —
+    anti-polar by symmetry. A cohesive swarm and a polarised flock are
+    different states, and only the second one has an order-disorder
+    transition to validate a substrate against. Measured on `ReferenceEngine`:
+    Boids never leaves psi ~ 0.05 at ANY alignment gain, so it cannot serve as
+    the ordering instrument.
+
+    Returns the acceleration that lands the velocity on the desired heading in
+    one step, so the engine's integration re-anchors speed every step rather
+    than letting it drift.
+
+    ⚠️ Related footgun, in `flock_step` rather than here: its weights are
+    dimensionless relaxation GAINS applied with no ``dt`` factor
+    (``v += w*(avg - v)``), so ``alignment_weight`` 1.0 snaps exactly to the
+    neighbour mean and **anything >= 2 overshoots and oscillates**. Turning
+    alignment "up" to get more order gets less: psi 0.22 at gain 0.3 vs 0.008
+    at gain 3.0.
+    """
+    from scipy.spatial import cKDTree
+
+    def _f(pos, vel, rng):
+        speeds = np.linalg.norm(vel, axis=1, keepdims=True)
+        headings = vel / np.maximum(speeds, 1e-9)
+        tree = cKDTree(pos)
+        neighbours = tree.query_ball_point(pos, neighbor_radius)
+        mean_heading = np.empty_like(headings)
+        for i, idx in enumerate(neighbours):
+            # `idx` always contains i itself, so an isolated agent keeps its
+            # own heading rather than dividing by zero.
+            mean_heading[i] = headings[idx].mean(axis=0)
+        norm = np.linalg.norm(mean_heading, axis=1, keepdims=True)
+        # A neighbourhood whose headings cancel exactly leaves no defined
+        # direction; keep the agent's own rather than inventing one.
+        desired = np.where(norm > 1e-9, mean_heading / np.maximum(norm, 1e-9),
+                           headings) * speed
+        return (desired - vel) / max(dt, 1e-9)
+    return _f
+
+
 def coverage_walker(noise_scale: float = 0.5) -> Baseline:
     """Persistent random walk — simple coverage strategy.
 
@@ -114,6 +162,11 @@ def coverage_walker(noise_scale: float = 0.5) -> Baseline:
 DEFAULT_BASELINES = {
     "random": lambda scenario: random_baseline(scale=1.0),
     "gossamer_flocking": lambda scenario: gossamer_flocking(),
+    # The constant-speed aligner. It is the ONLY baseline that orders the
+    # `vicsek_transition` row (Boids is anti-polar there — see that scenario),
+    # so leaving it out would make the substrate-validation row report a flat
+    # null for every baseline and look like a clean tie.
+    "vicsek_alignment": lambda scenario: vicsek_alignment(),
     # Per-scenario "canonical greedy"
     "greedy": lambda scenario: {
         "dispersal": greedy_disperse(),
@@ -121,6 +174,7 @@ DEFAULT_BASELINES = {
         "coverage": coverage_walker(),
         "leader_follower": greedy_rendezvous(),  # follow the leader via centroid proxy
         "byzantine": greedy_rendezvous(),
+        "vicsek_transition": vicsek_alignment(),
     }.get(scenario.name, do_nothing_baseline()),
 }
 
@@ -134,4 +188,5 @@ __all__ = [
     "greedy_disperse",
     "greedy_rendezvous",
     "random_baseline",
+    "vicsek_alignment",
 ]
