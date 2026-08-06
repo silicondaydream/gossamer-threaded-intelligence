@@ -16,7 +16,7 @@
 #      `importorskip` added next year beside a dependency this job never learns about,
 #      which would subtract a test from CI without subtracting anything from the green tick.
 #
-# Gossamer ships as the wheel the papers pin, and as of 0.8.0 it owns the algorithms that
+# Gossamer ships as the wheel the papers pin, and as of 0.9.0 it owns the algorithms that
 # used to hide in the runner. A number that moves here moves everywhere downstream.
 name: CI
 

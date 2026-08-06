@@ -78,6 +78,16 @@ steps:
         from gossamer.algorithms.coordination.hma import (  # noqa: F401
             depot_steering_accel, ring_depots,
         )
+        # gossamer 0.9: the orbital workload market (roadmap 4.1, N1's core).
+        # The schedulers are the N1 experiment's whole comparator set, so a
+        # wheel that ships without any one of them cannot run the experiment
+        # that cites it.
+        from gossamer.algorithms.coordination.orbital_market import (  # noqa: F401
+            Job, MarketView, OrbitalMarketWorld, OrbitalWorldConfig,
+            SatelliteConfig, auction_scheduler, cpsat_scheduler,
+            fcfs_scheduler, greedy_soc_scheduler, poisson_workload,
+            regime_label, scarcity_ratio,
+        )
         # The benchmark harness steps through this, not a private copy (M6.7).
         from gossamer.engine import PhysicsEngine, ReferenceEngine  # noqa: F401
         # The only task whose Q actually responds to tau_sec (P4b).
