@@ -48,10 +48,18 @@ class LeviathanEngine:
         except ImportError as exc:  # pragma: no cover - environment-dependent
             raise ImportError(
                 "LeviathanEngine needs the compiled `leviathan` module, which is not "
-                "importable here. Build it (cmake + pybind11) or run inside the "
-                "`leviathan-base` image. Refusing to fall back to ReferenceEngine: a "
-                "benchmark that silently ran on a different substrate than you asked "
-                "for is not a benchmark."
+                "importable here. It is the DEFAULT benchmark substrate as of suite "
+                "0.2.0, because a benchmark that cannot run on the engine the papers "
+                "run on cannot be the neutral standard it exists to be.\n\n"
+                "  To build it:  cmake -S <leviathan-engine> -B build "
+                "-Dpybind11_DIR=$(python -m pybind11 --cmakedir) && cmake --build build\n"
+                "                then PYTHONPATH=build/src/python:src/python\n"
+                "  Or run inside the `leviathan-base` image.\n"
+                "  Or, for development only, pass the substrate explicitly:\n"
+                "      run_benchmark(..., engine=ReferenceEngine())\n\n"
+                "Refusing to fall back on its own: a benchmark that silently ran on a "
+                "different substrate than you asked for is not a benchmark, and the "
+                "number it produces carries no trace of the swap."
             ) from exc
         self._leviathan = leviathan
         self._sims: Dict[str, object] = {}

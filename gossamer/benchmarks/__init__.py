@@ -51,9 +51,12 @@ from gossamer.benchmarks.baselines import (
     Baseline,
     vicsek_alignment,
 )
+from gossamer.benchmarks.faults import FAULT_MODELS, FaultModel, NoFaultsFiredError
 from gossamer.benchmarks.harness import (
+    SUITE_VERSION,
     BenchmarkConfig,
     BenchmarkResult,
+    default_engine,
     generate_leaderboard_md,
     leaderboard,
     run_benchmark,
@@ -63,6 +66,11 @@ from gossamer.benchmarks.scenarios import ALL_SCENARIOS, Scenario, ScenarioConte
 __all__ = [
     "ALL_SCENARIOS",
     "DEFAULT_BASELINES",
+    "FAULT_MODELS",
+    "FaultModel",
+    "NoFaultsFiredError",
+    "SUITE_VERSION",
+    "default_engine",
     "Baseline",
     "vicsek_alignment",
     "BenchmarkConfig",

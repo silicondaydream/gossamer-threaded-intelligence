@@ -16,6 +16,14 @@
 #      `importorskip` added next year beside a dependency this job never learns about,
 #      which would subtract a test from CI without subtracting anything from the green tick.
 #
+#   3. The COMPILED LEVIATHAN ENGINE is built here, because as of suite 0.2.0 it is the
+#      DEFAULT benchmark substrate. Before that the benchmark defaulted to the pure-NumPy
+#      ReferenceEngine, which meant every benchmark number in the repo came from a
+#      substrate the papers do not use -- a hole in the N2 moat, since a neutral standard
+#      that cannot run on the engine the standard is about is not a standard. With the
+#      default flipped, a job that does not build the engine cannot run the benchmark
+#      suite at all: it raises rather than falling back, which is the point.
+#
 # Gossamer ships as the wheel the papers pin, and as of 0.10.0 it owns the algorithms that
 # used to hide in the runner. A number that moves here moves everywhere downstream.
 name: CI
@@ -42,6 +50,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The compiled engine is a same-org sibling and is NOT pip-installable:
+      # leviathan-engine's setup.py packages only the pure-Python adapters, and the
+      # `leviathan` extension is a CMake target (pybind11_add_module). Same recipe
+      # maneuver-map's ci.yml uses -- one source of truth for how to get the engine.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/leviathan-engine
+          path: _leviathan
+
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -57,11 +74,31 @@ jobs:
           # The learning and MILP baselines are gated on these; without them their tests do
           # not fail, they disappear.
           python -m pip install -e ".[all]"
-          python -m pip install pytest
+          python -m pip install pytest pybind11
+
+      - name: Build the compiled Leviathan engine
+        run: |
+          cmake -S _leviathan -B _leviathan/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -Dpybind11_DIR="$(python -m pybind11 --cmakedir)"
+          cmake --build _leviathan/build -j"$(nproc)"
+
+      # Fail HERE, loudly, if the module did not build -- rather than later as an
+      # inscrutable ImportError inside the benchmark suite. The root CMakeLists SILENTLY
+      # skips the bindings when pybind11 is missing, so a build that "succeeded" is not by
+      # itself evidence that the module exists. Check the artifact.
+      - name: Assert the engine imports and exports its schema
+        env:
+          PYTHONPATH: _leviathan/build/src/python:_leviathan/src/python
+        run: |
+          python -c "import leviathan; s = leviathan.config_schema(); assert s, 'engine exported an EMPTY config schema'; print(f'leviathan OK - {len(s)} config keys')"
 
       # A skip here means an extra failed to install, or someone added an importorskip.
       # Both are bugs in this job. -rs prints the reasons if it ever does happen.
       - name: Run the suite (a skip is a failure)
         env:
           ARBORIA_REQUIRE_TESTS: "1"
+          # Without this the benchmark suite raises: Leviathan is the default substrate
+          # and it deliberately does not fall back.
+          PYTHONPATH: _leviathan/build/src/python:_leviathan/src/python
         run: python -m pytest -q -rs

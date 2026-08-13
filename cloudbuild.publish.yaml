@@ -53,6 +53,9 @@ steps:
             'gossamer.engine',
             'gossamer.algorithms.coordination.kernels',
             'gossamer.algorithms.coordination.baselines',
+            'gossamer.communication',
+            'gossamer.communication.delayed_view',
+            'gossamer.benchmarks.faults',
         ):
             __import__(mod)
         # Symbol-level checks: importing a module cannot catch a function that
@@ -126,6 +129,74 @@ steps:
         # is why every benchmark number to date came from ReferenceEngine.
         from gossamer.leviathan_engine import LeviathanEngine  # noqa: F401
         from gossamer.benchmarks.cli import main as _bench_main  # noqa: F401
+
+        # THE DELAYED VIEW (0.11.0). This is the mechanism the entire DCC corpus
+        # measures, and it lived in the Maneuver.Map runner until now — which is
+        # precisely why it needs a gate here: `runner.py` imports it from the WHEEL,
+        # so a wheel without it does not degrade, it fails to start the worker after
+        # the job array has been queued and billed. `orrery.benchmarks.dcc_delay`
+        # imports it too, so a stale wheel silently removes the benchmark's crown
+        # -jewel row as well.
+        from gossamer.communication import (  # noqa: F401
+            DelayedView, gating_enabled, resolve_delay_steps)
+        # Behavioural, not symbol-level: the per-agent delay axis (roadmap 20) adds
+        # no importable name of its own — it is a keyword argument — so only
+        # exercising it can tell a 0.11.0 wheel from a 0.10.0 one. The uniform case
+        # must also still reduce to the scalar path, which is the property that
+        # keeps every published delay number where it is.
+        _n = 3
+        _v = DelayedView({}, dt=1.0, num_agents=_n, prediction=None,
+                         rng=np.random.default_rng(0),
+                         delay_steps_per_agent=np.array([0, 1, 2]))
+        for _s in range(4):
+            _vp, _, _ = _v.perceive(np.full((_n, 3), float(_s)), np.zeros((_n, 3)))
+        assert list(_vp[:, 0]) == [3.0, 2.0, 1.0], (
+            f"per-agent delay offsets are not being applied ({_vp[:, 0]}) — this "
+            f"wheel predates 0.11.0 and the measured delay axis is a no-op")
+
+        # The standardized fault models (0.11.0). A SET assertion, like the scenario
+        # and baseline registries above: adding a fault model is a deliberate
+        # two-line change and losing one is a build failure. A missing fault row does
+        # not degrade — it silently stops being evaluated, and the leaderboard still
+        # looks complete.
+        from gossamer.benchmarks.faults import (  # noqa: F401
+            FAULT_MODELS, FaultModel, NoFaultsFiredError)
+        assert set(FAULT_MODELS) == {
+            "none", "fail_stop", "seu", "seu_significant", "seu_unprotected",
+        }, f"fault model registry drifted: {sorted(FAULT_MODELS)}"
+        # And the anti-no-op guard must actually refuse. This is the property the
+        # whole registry exists for: a fault row that fired nothing must not be
+        # reportable, because a fault-free run under a fault label reads as
+        # robustness (this is the ByzantineScenario failure, generalized).
+        _refused = False
+        try:
+            FAULT_MODELS["seu"].verify({"seu_flips_total": 0.0})
+        except NoFaultsFiredError:
+            _refused = True
+        assert _refused, ("a fault model with ZERO fired faults was accepted — the "
+                          "no-op guard is not wired")
+
+        # The single-substrate story (suite 0.2.0). `default_engine()` must resolve to
+        # the COMPILED engine, never the pure-NumPy reference — the wheel is what the
+        # papers pin, and a benchmark defaulting to a substrate the papers do not use is
+        # the hole this closed. We only assert the symbol and the suite version here:
+        # this build step has no compiled engine, and default_engine() rightly raises
+        # without one, which is itself the behaviour under test.
+        from gossamer.benchmarks import SUITE_VERSION, default_engine
+        assert SUITE_VERSION == "0.2.0", f"benchmark suite version drifted: {SUITE_VERSION}"
+        # BEHAVIOURAL, not a source scan: this build step has no compiled engine, so
+        # a default_engine() that RETURNS anything here has silently fallen back to a
+        # substrate the papers do not use — and that swap leaves no trace in the number
+        # it produces. Raising is the contract.
+        try:
+            _eng = default_engine()
+        except ImportError:
+            pass
+        else:
+            raise AssertionError(
+                f"default_engine() returned {type(_eng).__name__} in an environment with "
+                f"no compiled engine — it has grown a fallback, which is the exact silent "
+                f"substrate swap the Leviathan default exists to prevent")
         print("✅ Import OK")
         PY
 

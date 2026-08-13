@@ -166,8 +166,17 @@ new_vel = policy.step(graph)
 
 ```python
 from gossamer.benchmarks import leaderboard, generate_leaderboard_md
+# Runs on the COMPILED Leviathan engine by default (suite 0.2.0) — the substrate
+# the papers use. Needs the `leviathan` module on PYTHONPATH; it raises with build
+# instructions rather than falling back, because a benchmark that silently ran on a
+# different substrate is not comparable to anything.
 results = leaderboard(num_seeds=3)  # default scenarios + baselines
 print(generate_leaderboard_md(results))
+
+# For development without the compiled engine, ask for the reference explicitly.
+# Every result records which substrate produced it (`BenchmarkResult.engine`).
+from gossamer.engine import ReferenceEngine
+results = leaderboard(num_seeds=1, engine=ReferenceEngine())
 ```
 
 ## Example 4: auction task allocation

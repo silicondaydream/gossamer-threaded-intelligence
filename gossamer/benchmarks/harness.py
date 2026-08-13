@@ -2,18 +2,30 @@
 Benchmark driver and leaderboard generation.
 
 Runs a scenario + baseline combination against an injected
-:class:`gossamer.engine.PhysicsEngine`. The default is
-:class:`~gossamer.engine.ReferenceEngine`, a pure-NumPy stepper whose kinematics
-are pinned to Leviathan's, so the suite has no compiled dependency and can be run
-by anyone who installs the wheel. Pass Leviathan itself (or Maneuver.Map's
-``EngineClient``) to produce numbers directly comparable with paper runs.
+:class:`gossamer.engine.PhysicsEngine`.
 
-This used to hardcode a private ``_step_numpy`` and its docstring claimed an
-``engine_mode="inprocess"`` Leviathan path that **did not exist** — no such
-parameter was ever defined. Worse, ``_step_numpy`` clamped speed while Leviathan
-does not, so the benchmark silently stabilised policies that diverge on the real
-engine. A benchmark whose substrate differs from the papers' cannot be the
-neutral standard it exists to be.
+**The default substrate is Leviathan** (:class:`gossamer.leviathan_engine.LeviathanEngine`),
+the compiled engine the papers run on. It used to be
+:class:`~gossamer.engine.ReferenceEngine` — pure NumPy, no compiled dependency,
+"runnable by anyone who installs the wheel" — and that convenience quietly cost
+the benchmark its whole claim. `leviathan_engine.py` states the hole plainly:
+*every benchmark number in the repo came from ReferenceEngine*, and DOCS is
+explicit that you must never compare a benchmark result to a paper unless both ran
+on the same substrate. A neutral standard that cannot run on the engine the
+standard is about is not a standard.
+
+So the convenient default is gone. If the compiled engine is missing, this RAISES
+and names the opt-out rather than falling back — a silent substrate swap is the
+precise failure being closed, and it is invisible in the result. Passing
+``engine=ReferenceEngine()`` explicitly is still fine for development; the result
+records which engine ran (``BenchmarkResult.engine``) so a reference number can
+never be mistaken for a paper-comparable one.
+
+Two substrate differences are why this is not cosmetic: the C++ owns its own RNG
+(noise, faults), and its config is validated, so a key the reference silently
+ignores raises here. A third one already bit: the original ``_step_numpy``
+clamped speed while Leviathan does not, so the benchmark silently stabilised
+policies that diverge on the real engine.
 
 Output shape:
 
@@ -33,7 +45,26 @@ import numpy as np
 
 from gossamer.benchmarks.baselines import Baseline, DEFAULT_BASELINES
 from gossamer.benchmarks.scenarios import ALL_SCENARIOS, Scenario, ScenarioContext
+from gossamer.benchmarks.faults import FAULT_MODELS, FaultModel, NoFaultsFiredError
 from gossamer.engine import PhysicsEngine, ReferenceEngine
+
+#: Results are comparable only within one (version, substrate) pair. Bumped when
+#: the default substrate moved from ReferenceEngine to Leviathan, because that
+#: changes every kinematic number in the suite: pre-0.2.0 leaderboards are retired,
+#: not merely stale. This is the same discipline `orrery.benchmarks` follows —
+#: changing a frozen parameter is a new version, never a knob.
+SUITE_VERSION = "0.2.0"
+
+
+def default_engine() -> PhysicsEngine:
+    """The compiled engine, or a refusal that names the opt-out.
+
+    Never falls back to ReferenceEngine. A benchmark that silently ran on a
+    different substrate than the papers is the exact failure this default exists
+    to close, and it leaves no trace in the number it produces.
+    """
+    from gossamer.leviathan_engine import LeviathanEngine
+    return LeviathanEngine()
 
 
 @dataclass
@@ -51,6 +82,11 @@ class BenchmarkConfig:
     # diverge on the real engine.
     max_speed: float = 10.0
     integrator: str = "euler"
+    #: Name from `gossamer.benchmarks.faults.FAULT_MODELS`. "none" is the
+    #: fault-free control. Any other value REQUIRES an engine with a fault module
+    #: (LeviathanEngine) and refuses the run if the fault left no trace — see that
+    #: module for why the evidence check is not optional.
+    fault_model: str = "none"
 
 
 @dataclass
@@ -63,6 +99,16 @@ class BenchmarkResult:
     num_agents: int
     steps: int
     seed: int
+    #: The fault regime this row ran under, and the measured evidence it actually
+    #: fired. Both travel with the result: a fault row whose count is absent from
+    #: the record cannot be distinguished later from a fault-free one.
+    fault_model: str = "none"
+    faults_fired: float = 0.0
+    #: Which substrate produced this number, and which suite version it belongs to.
+    #: Both travel with the result because a ReferenceEngine number and a Leviathan
+    #: number are not comparable, and nothing else in the row says which you have.
+    engine: str = "unknown"
+    suite_version: str = SUITE_VERSION
     extra: Dict[str, float] = field(default_factory=dict)
 
 
@@ -83,7 +129,23 @@ def run_benchmark(
     The scenario owns the initial state, so the engine is created and then
     ``set_state``'d rather than being allowed to randomise its own.
     """
-    engine = engine or ReferenceEngine()
+    engine = engine if engine is not None else default_engine()
+    if config.fault_model not in FAULT_MODELS:
+        raise ValueError(
+            f"unknown fault model {config.fault_model!r}; expected one of "
+            f"{sorted(FAULT_MODELS)}")
+    fault: FaultModel = FAULT_MODELS[config.fault_model]
+    # A fault model against a substrate with no fault module would apply nothing and
+    # report a clean fault-free run under a fault label — the exact silent no-op the
+    # registry exists to prevent. `metrics()` is how a fault proves it fired, so an
+    # engine without it cannot carry a fault row.
+    if fault.requires_engine_faults and not hasattr(engine, "metrics"):
+        raise NoFaultsFiredError(
+            f"fault model {config.fault_model!r} needs an engine that implements faults "
+            f"and reports them; {type(engine).__name__} does not expose metrics(). Use "
+            f"LeviathanEngine — ReferenceEngine has no fault module, so this row would "
+            f"silently be a fault-free run.")
+
     rng = np.random.default_rng(config.seed)
     pos, vel = scenario.init_state(rng, config.num_agents, config.bound)
     trajectory: List[Dict[str, np.ndarray]] = []
@@ -95,6 +157,7 @@ def run_benchmark(
         "integrator": config.integrator,
         # The channel is off: benchmark scenarios score coordination, and a run
         # with no comm keys makes the engine's comm model a no-op.
+        **fault.config,
     })
     engine.set_state(sim_id, pos, vel)
 
@@ -121,6 +184,11 @@ def run_benchmark(
                 trajectory.append({"pos": pos.copy(), "vel": vel.copy()})
             prev_pos = pos
             prev_vel = vel
+        # Read the evidence BEFORE the sim is destroyed. `verify` raises when the
+        # fault left no trace, so a fault row cannot reach the leaderboard without
+        # having demonstrably contained faults.
+        faults_fired = fault.verify(
+            engine.metrics(sim_id) if hasattr(engine, "metrics") else {})
     finally:
         engine.destroy(sim_id)
 
@@ -136,6 +204,9 @@ def run_benchmark(
         num_agents=config.num_agents,
         steps=config.steps,
         seed=config.seed,
+        fault_model=config.fault_model,
+        faults_fired=float(faults_fired),
+        engine=type(engine).__name__,
     )
 
 
@@ -150,9 +221,12 @@ def leaderboard(
 
     Returns all results flattened; aggregate afterward with
     :func:`generate_leaderboard_md`. Missing configs default to
-    :class:`BenchmarkConfig`. ``engine`` is forwarded to every cell, so a whole
-    leaderboard can be regenerated on Leviathan for paper-comparable numbers.
+    :class:`BenchmarkConfig`. ``engine`` is forwarded to every cell; ONE engine is
+    built here and shared, so a leaderboard cannot silently mix substrates
+    row-to-row. Defaults to Leviathan — see the module docstring for why the
+    convenient pure-NumPy default was removed.
     """
+    engine = engine if engine is not None else default_engine()
     scenarios = scenarios or list(ALL_SCENARIOS.keys())
     baselines = baselines or list(DEFAULT_BASELINES.keys())
     configs = configs or {}
