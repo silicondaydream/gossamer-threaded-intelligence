@@ -16,6 +16,6 @@ docs/_build/
 *.coverage
 coverage.xml
 /.mypy_cache/
-
+.csv
 # macOS
 .DS_Store
