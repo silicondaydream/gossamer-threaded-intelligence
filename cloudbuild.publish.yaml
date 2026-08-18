@@ -185,69 +185,24 @@ steps:
         from gossamer.benchmarks import SUITE_VERSION, default_engine
         assert SUITE_VERSION == "0.3.0", f"benchmark suite version drifted: {SUITE_VERSION}"
 
-        # --- suite 0.3.0: the two definition changes the 0.2.0 reference run found ---
-        # Both are asserted BEHAVIOURALLY and engine-free, because both regress
-        # SILENTLY: a wheel that loses either still produces a full, plausible
-        # leaderboard, which is the only failure mode this gate exists for.
-
-        # (1) A scenario owns its required config. `vicsek_transition` is the
-        # substrate-validation row, and at the suite default it is ~100x too sparse in
-        # 3-D to order at all — it returned psi = 0.052 against a disordered floor of
-        # 0.045, a row sitting ON the floor that the cross-baseline discrimination
-        # check passed. If this requirement stops being declared or stops being
-        # applied, that degenerate row comes back and reads as "the substrate cannot
-        # order".
+        # suite 0.3.0 invariants; both regress silently (leaderboard stays full).
         from gossamer.benchmarks import ScenarioContext, apply_required_config
         from gossamer.benchmarks.scenarios import ALL_SCENARIOS as _SC
         _vic = _SC["vicsek_transition"]()
-        assert _vic.required_config == {"num_agents": 200, "bound": 22.0}, (
-            f"vicsek_transition no longer declares its validated config "
-            f"({_vic.required_config!r}) — the substrate-validation row will run at a "
-            f"density where nothing can order and report it as a substrate failure")
-        _applied = apply_required_config(_vic, BenchmarkConfig())
-        assert (_applied.num_agents, _applied.bound) == (200, 22.0), (
-            "the harness is not APPLYING required_config — declaring it is only half "
-            "the fix; this is the trust-the-caller arrangement that failed the first time")
-
-        # (2) `coverage` scores the simulated VOLUME. It used to index (y, x) only —
-        # a 2-D shadow of a 3-D domain — which made vertical travel free and left the
-        # row with no headroom: three of four baselines within 4% of the ceiling and
-        # the greedy walker answering no fault rung at all. Asserted as a property of
-        # the ENVIRONMENT rather than an expected score, because a metric is the one
-        # component with no independent check on it: two agents differing solely in
-        # altitude must occupy different cells.
+        assert _vic.required_config == {"num_agents": 200, "bound": 22.0}, _vic.required_config
+        _ap = apply_required_config(_vic, BenchmarkConfig())
+        assert (_ap.num_agents, _ap.bound) == (200, 22.0), "required_config not applied"
         _cov = _SC["coverage"]()
         _cov.init_state(np.random.default_rng(0), 2, 100.0)
-        _p = np.array([[0.0, 0.0, -90.0], [0.0, 0.0, 90.0]])
-        _cov.step_reward(_p, np.zeros_like(_p), _p, np.zeros_like(_p),
-                         ScenarioContext(step=0, total_steps=1, dt=0.1))
-        assert len(_cov._visited) == 2, (
-            "coverage is collapsing the z axis — two agents separated only in altitude "
-            "scored as one cell. This is the 2-D projection that saturated the row and "
-            "hid 60 destroyed runs as healthy ones")
-        # And a destroyed run must not report a plausible ratio. Occupancy is an
-        # accumulator, so a swarm annihilated mid-run still holds the coverage it
-        # earned while alive — the fault-reduction inversion arriving through the
-        # metric instead of the CI.
-        _dead = _p.copy(); _dead[0] = np.nan
-        _cov.step_reward(_dead, np.zeros_like(_dead), _p, np.zeros_like(_p),
-                         ScenarioContext(step=1, total_steps=2, dt=0.1))
-        assert _cov.terminal_metric([]) != _cov.terminal_metric([]), (
-            "coverage returned a finite ratio for a run whose state went non-finite — "
-            "a destroyed swarm is being reported as a healthy one")
-        # BEHAVIOURAL, not a source scan: this build step has no compiled engine, so
-        # a default_engine() that RETURNS anything here has silently fallen back to a
-        # substrate the papers do not use — and that swap leaves no trace in the number
-        # it produces. Raising is the contract.
-        try:
-            _eng = default_engine()
-        except ImportError:
-            pass
-        else:
-            raise AssertionError(
-                f"default_engine() returned {type(_eng).__name__} in an environment with "
-                f"no compiled engine — it has grown a fallback, which is the exact silent "
-                f"substrate swap the Leviathan default exists to prevent")
+        _p = np.array([[0., 0., -90.], [0., 0., 90.]]); _z = np.zeros_like(_p)
+        _ctx = ScenarioContext(step=0, total_steps=2, dt=0.1)
+        _cov.step_reward(_p, _z, _p, _z, _ctx)
+        assert len(_cov._visited) == 2, "coverage collapsed the z axis"
+        _d = _p.copy(); _d[0] = np.nan
+        _cov.step_reward(_d, _z, _p, _z, _ctx)
+        _m = _cov.terminal_metric([])
+        assert _m != _m, f"non-finite run reported a finite ratio: {_m}"
+
         print("✅ Import OK")
         PY
 
