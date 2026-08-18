@@ -48,12 +48,24 @@ from gossamer.benchmarks.scenarios import ALL_SCENARIOS, Scenario, ScenarioConte
 from gossamer.benchmarks.faults import FAULT_MODELS, FaultModel, NoFaultsFiredError
 from gossamer.engine import PhysicsEngine, ReferenceEngine
 
-#: Results are comparable only within one (version, substrate) pair. Bumped when
-#: the default substrate moved from ReferenceEngine to Leviathan, because that
-#: changes every kinematic number in the suite: pre-0.2.0 leaderboards are retired,
-#: not merely stale. This is the same discipline `orrery.benchmarks` follows —
-#: changing a frozen parameter is a new version, never a knob.
-SUITE_VERSION = "0.2.0"
+#: Results are comparable only within one (version, substrate) pair. This is the
+#: same discipline `orrery.benchmarks` follows — changing a frozen parameter is a
+#: new version, never a knob.
+#:
+#: 0.2.0: the default substrate moved from ReferenceEngine to Leviathan, which
+#: changes every kinematic number in the suite.
+#: 0.3.0: two definition changes the 0.2.0 reference run found in the suite ITSELF.
+#:   (1) `coverage` counts occupancy over the simulated VOLUME; it had indexed
+#:       (y, x) only, and that projection is what left the row with no headroom —
+#:       three of four baselines within 4% of the ceiling and the greedy walker
+#:       answering no fault rung at all.
+#:   (2) A scenario declares its own `required_config` instead of trusting the
+#:       caller, so `vicsek_transition` can no longer be run at a density where
+#:       nothing can order. Numbers do not move for (2) — the 0.2.0 generator
+#:       already supplied that config externally; the change is that omitting it
+#:       is now impossible rather than merely documented.
+#: 0.2.0 leaderboards are retired by (1), not merely stale.
+SUITE_VERSION = "0.3.0"
 
 
 def default_engine() -> PhysicsEngine:
@@ -112,6 +124,50 @@ class BenchmarkResult:
     extra: Dict[str, float] = field(default_factory=dict)
 
 
+class ScenarioConfigConflictError(ValueError):
+    """A caller set a config value the scenario declares it cannot run at."""
+
+
+def apply_required_config(scenario: Scenario,
+                          config: BenchmarkConfig) -> BenchmarkConfig:
+    """Overlay ``scenario.required_config`` onto ``config``, refusing conflicts.
+
+    A scenario that is only meaningful at a particular configuration says so on
+    itself, and the harness applies it — so a caller cannot omit it. The failure
+    this closes was silent and shipped: `leaderboard()` had always accepted
+    per-scenario configs, nothing ever supplied one, and the substrate-validation
+    row therefore ran at a density where no substrate can order. It returned a
+    plausible number on a row whose baselines still differed, so the cross-baseline
+    discrimination check passed it.
+
+    Overriding a value the caller *deliberately* chose would be its own silent
+    failure, so the two cases are separated: a key still at the
+    :class:`BenchmarkConfig` default is filled in, and a key the caller set to
+    something else is REFUSED. Requesting a run at a configuration the scenario
+    declares invalid is a question the harness cannot answer honestly, and the
+    answer it would otherwise give is a number under the wrong label.
+    """
+    required = getattr(scenario, "required_config", None)
+    if not required:
+        return config
+    defaults = BenchmarkConfig()
+    updates: Dict[str, object] = {}
+    for key, want in required.items():
+        if not hasattr(defaults, key):
+            raise ScenarioConfigConflictError(
+                f"scenario {scenario.name!r} requires unknown config key {key!r}")
+        have = getattr(config, key)
+        if have == want:
+            continue
+        if have != getattr(defaults, key):
+            raise ScenarioConfigConflictError(
+                f"scenario {scenario.name!r} requires {key}={want!r} but the caller "
+                f"set {key}={have!r}. This scenario is not valid at that value — see "
+                f"its docstring. Pass the default to accept the required value.")
+        updates[key] = want
+    return BenchmarkConfig(**{**config.__dict__, **updates}) if updates else config
+
+
 def run_benchmark(
     scenario: Scenario,
     baseline: Baseline,
@@ -121,15 +177,21 @@ def run_benchmark(
 ) -> BenchmarkResult:
     """Run a single scenario + baseline combination end to end.
 
-    ``engine`` defaults to :class:`~gossamer.engine.ReferenceEngine` (pure NumPy,
-    Leviathan-equivalent kinematics) and is deterministic for a given seed. Pass
-    Leviathan — or any object satisfying :class:`~gossamer.engine.PhysicsEngine` —
-    to run the suite on the same substrate as the papers.
+    ``engine`` defaults to :func:`default_engine` — the COMPILED engine, which
+    raises with build instructions rather than falling back. Deterministic for a
+    given seed. Pass :class:`~gossamer.engine.ReferenceEngine` explicitly to use
+    the pure-NumPy path; it cannot carry a fault row (no fault module), so the
+    harness refuses that combination rather than reporting a fault-free run
+    under a fault label.
 
     The scenario owns the initial state, so the engine is created and then
     ``set_state``'d rather than being allowed to randomise its own.
     """
     engine = engine if engine is not None else default_engine()
+    # Applied HERE rather than in `leaderboard()` so it holds for every caller —
+    # a scenario's validity requirement that only the leaderboard path honours is
+    # the same trust-the-caller arrangement that failed the first time.
+    config = apply_required_config(scenario, config)
     if config.fault_model not in FAULT_MODELS:
         raise ValueError(
             f"unknown fault model {config.fault_model!r}; expected one of "

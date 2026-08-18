@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Dict, Tuple
 
 import numpy as np
 from scipy.spatial import cKDTree
@@ -38,6 +38,21 @@ class Scenario(ABC):
     name: str = "base"
     recommended_agents: Tuple[int, int] = (100, 10_000)
     success_criterion: str = ""  # plain-English, used in the leaderboard
+
+    #: Config keys this scenario REQUIRES, applied by the harness over whatever
+    #: the caller passed. Empty for a scenario that is valid at the suite default.
+    #:
+    #: This exists because trusting the caller failed exactly once and silently.
+    #: `vicsek_transition` is only meaningful at the density it was validated at;
+    #: `leaderboard()` had always accepted per-scenario configs and nothing ever
+    #: supplied one, so the substrate-validation row ran ~100x too sparse in 3-D
+    #: and returned psi = 0.052 against a disordered floor of 0.045 — a row
+    #: sitting ON the floor, one config parameter from being published as "the
+    #: substrate cannot order". Putting the requirement on the SCENARIO makes it
+    #: impossible for a caller to omit, which is the difference between a fix and
+    #: a note. A caller that deliberately sets a conflicting value is refused
+    #: rather than overridden — see `apply_required_config`.
+    required_config: Dict[str, object] = {}
 
     @abstractmethod
     def init_state(self, rng: np.random.Generator, num_agents: int, bound: float
@@ -134,8 +149,34 @@ class RendezvousScenario(Scenario):
 
 
 class CoverageScenario(Scenario):
+    """Occupancy coverage of the simulated volume.
+
+    **The occupancy grid spans z, and that is a correction.** It used to index
+    ``(y, x)`` only — a 2-D shadow of a domain the substrate integrates in 3-D —
+    and the projection is what destroyed the metric's headroom: z-motion visited
+    no new cell, so every agent's vertical travel was free, and 500 agents over
+    500 steps swept a 40x40 grid to exhaustion. Measured on the reference
+    leaderboard, three of the four baselines landed within 4% of the ceiling
+    (greedy 1.000 +/- 0, random 0.989, vicsek 0.961) and the greedy walker
+    responded to NO fault rung — max 3e-05, including the exponent-range upsets
+    that destroy 86.5% of runs elsewhere. It read as the most radiation-robust
+    cell in the suite; it was a metric with nothing left to lose.
+
+    Note what the audit could and could not see. The cross-baseline degeneracy
+    check passed, because the baselines did differ. The saturation check caught
+    only ``greedy``, because it demands literally zero seed variance — ``random``
+    at 0.989 +/- 0.002 is pinned just as thoroughly and slipped through. A near-
+    ceiling row is the same defect as a pinned one and is harder to see, which is
+    guardrail 4 in miniature: a number that cannot move looks like a measurement.
+
+    Counting the third axis is a fix to the metric, not a tuning of the task:
+    ``grid_resolution`` is unchanged at its default 5.0, and no other knob moved.
+    At the same configuration the row now separates every baseline with headroom
+    in both directions -- greedy 0.353, random 0.151, vicsek 0.115, flocking
+    0.025 -- and responds to damage.
+    """
     name = "coverage"
-    success_criterion = "unique cells visited / total cells"
+    success_criterion = "unique volume cells visited / total cells"
     recommended_agents: Tuple[int, int] = (500, 50_000)
 
     def __init__(self, grid_resolution: float = 5.0):
@@ -146,26 +187,41 @@ class CoverageScenario(Scenario):
     def init_state(self, rng, num_agents, bound):
         self._bound = bound
         self._visited = set()
+        self._diverged = False
         self._cov_w = max(1, int(2 * bound / self.grid_resolution))
         pos = rng.uniform(-bound, bound, size=(num_agents, 3))
         vel = rng.normal(scale=0.1, size=(num_agents, 3))
         return pos, vel
 
     def step_reward(self, pos, vel, prev_pos, prev_vel, ctx):
-        # Per-agent reward = 1 if this agent visited a fresh cell this step
-        b = self._bound
-        cells_x = np.clip(((pos[:, 0] + b) / (2 * b)) * self._cov_w, 0, self._cov_w - 1).astype(int)
-        cells_y = np.clip(((pos[:, 1] + b) / (2 * b)) * self._cov_w, 0, self._cov_w - 1).astype(int)
+        # Per-agent reward = 1 if this agent visited a fresh VOLUME cell this step.
+        #
+        # Non-finite state is recorded and made terminal, NOT skipped. An occupancy
+        # metric is an accumulator, so a run destroyed at step 300 still holds the
+        # 300 steps of coverage it earned while alive, and returning that ratio
+        # reports a plausible healthy number for an annihilated swarm — the exact
+        # inversion the fault reduction is built to refuse, arriving through the
+        # metric instead of through the CI. (The old float->int cast on a NaN was
+        # undefined and silently added one garbage cell, which did not help either.)
+        # A diverged run must present a non-finite metric so the harness classifies
+        # it as DIVERGED and counts it as a casualty.
+        b, w = self._bound, self._cov_w
+        finite = np.isfinite(pos).all(axis=1)
+        if not finite.all():
+            self._diverged = True
+        cells = np.clip(((pos[finite] + b) / (2 * b)) * w, 0, w - 1).astype(int)
         r = np.zeros(pos.shape[0])
-        for i in range(pos.shape[0]):
-            key = (int(cells_y[i]), int(cells_x[i]))
+        for j, i in enumerate(np.flatnonzero(finite)):
+            key = (int(cells[j, 0]), int(cells[j, 1]), int(cells[j, 2]))
             if key not in self._visited:
                 self._visited.add(key)
                 r[i] = 1.0
         return r
 
     def terminal_metric(self, trajectory):
-        total_cells = self._cov_w * self._cov_w
+        if getattr(self, "_diverged", False):
+            return float("nan")
+        total_cells = self._cov_w ** 3
         return float(len(self._visited)) / float(max(1, total_cells))
 
 
@@ -299,6 +355,15 @@ class VicsekTransitionScenario(Scenario):
     """
     name = "vicsek_transition"
     success_criterion = "steady-state polarization psi (order parameter)"
+
+    #: The density this scenario was validated at, and the reason `required_config`
+    #: exists at all. The suite default (N=500, bound=100) is ~100x sparser in 3-D
+    #: and leaves the fixed interaction radius with almost no neighbours: psi
+    #: collapses to 0.052 against a disordered floor of 1/sqrt(500) = 0.045, so the
+    #: row reads as "the substrate cannot order" while being a statement about the
+    #: configuration alone. The harness now applies this, and refuses a caller who
+    #: sets a conflicting value rather than silently overriding one.
+    required_config: Dict[str, object] = {"num_agents": 200, "bound": 22.0}
 
     def __init__(self, noise_eta: float = 0.0):
         if noise_eta < 0.0:

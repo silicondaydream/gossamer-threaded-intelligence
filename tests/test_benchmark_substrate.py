@@ -24,7 +24,15 @@ label that now travels with every result.
 import numpy as np
 import pytest
 
-from gossamer.benchmarks import ALL_SCENARIOS, DEFAULT_BASELINES, BenchmarkConfig, run_benchmark
+from gossamer.benchmarks import (
+    ALL_SCENARIOS,
+    DEFAULT_BASELINES,
+    BenchmarkConfig,
+    ScenarioConfigConflictError,
+    ScenarioContext,
+    apply_required_config,
+    run_benchmark,
+)
 from gossamer.benchmarks.harness import SUITE_VERSION, default_engine
 from gossamer.engine import ReferenceEngine
 
@@ -56,9 +64,10 @@ def test_every_result_names_the_substrate_that_produced_it():
 
 def test_every_result_names_its_suite_version():
     """Results are comparable only within one (version, substrate) pair. The
-    version moved when the substrate did, so pre-0.2.0 leaderboards are retired
-    rather than merely stale."""
-    assert _cell().suite_version == SUITE_VERSION == "0.2.0"
+    version moved when the substrate did (0.2.0) and again when `coverage`
+    started counting occupancy over the simulated volume (0.3.0), so earlier
+    leaderboards are retired rather than merely stale."""
+    assert _cell().suite_version == SUITE_VERSION == "0.3.0"
 
 
 def test_the_substrates_agree_on_the_fault_free_kinematic_core():
@@ -127,3 +136,77 @@ def test_a_leaderboard_cannot_mix_substrates_row_to_row():
     assert results
     assert {r.engine for r in results} == {"LeviathanEngine"}
     assert {r.suite_version for r in results} == {SUITE_VERSION}
+
+
+# ---- suite 0.3.0: the two definition changes the 0.2.0 reference run found ----
+
+
+def test_a_scenario_owns_its_required_config():
+    """`vicsek_transition` is only meaningful at the density it was validated at.
+
+    Trusting the caller failed silently once already: `leaderboard()` had always
+    accepted per-scenario configs and nothing ever supplied one, so the
+    substrate-validation row ran ~100x too sparse in 3-D and reported psi = 0.052
+    against a disordered floor of 0.045 — a row sitting ON the floor, which the
+    cross-baseline discrimination check happily passed. The requirement now lives
+    on the scenario and the harness applies it, so omitting it is impossible
+    rather than merely documented.
+    """
+    sc = ALL_SCENARIOS["vicsek_transition"]()
+    got = apply_required_config(sc, BenchmarkConfig(num_agents=500, bound=100.0))
+    assert (got.num_agents, got.bound) == (200, 22.0)
+    # A scenario with no requirement is passed through untouched.
+    plain = BenchmarkConfig(num_agents=500, bound=100.0)
+    assert apply_required_config(ALL_SCENARIOS["rendezvous"](), plain) is plain
+
+
+def test_a_deliberate_conflicting_config_is_refused_not_overridden():
+    """Silently overriding a value the caller chose is its own silent failure.
+
+    Filling in a default is a fix; discarding an explicit request and returning a
+    number under the wrong label is the house bug wearing the fix's clothes.
+    """
+    sc = ALL_SCENARIOS["vicsek_transition"]()
+    with pytest.raises(ScenarioConfigConflictError, match="not valid at that value"):
+        apply_required_config(sc, BenchmarkConfig(num_agents=4000))
+
+
+def test_coverage_counts_the_volume_not_a_two_dimensional_shadow():
+    """The metric indexed (y, x) of a domain the substrate integrates in 3-D.
+
+    That projection made vertical travel free and left the row with no headroom:
+    on the 0.2.0 reference run three of four baselines landed within 4% of the
+    ceiling and the greedy walker answered no fault rung at all (max 3e-05).
+    """
+    sc = ALL_SCENARIOS["coverage"]()
+    rng = np.random.default_rng(0)
+    pos, vel = sc.init_state(rng, 64, 100.0)
+    ctx = ScenarioContext(step=0, total_steps=1, dt=0.1)
+    sc.step_reward(pos, vel, pos, vel, ctx)
+    # Denominator is the volume, and the visited keys are 3-tuples.
+    assert sc.terminal_metric([]) == pytest.approx(len(sc._visited) / sc._cov_w ** 3)
+    assert all(len(k) == 3 for k in sc._visited)
+    # Two agents differing ONLY in z must occupy different cells. Under the old
+    # projection this assertion is false, which is precisely the lost headroom.
+    sc2 = ALL_SCENARIOS["coverage"]()
+    sc2.init_state(np.random.default_rng(0), 2, 100.0)
+    p = np.array([[0.0, 0.0, -90.0], [0.0, 0.0, 90.0]])
+    sc2.step_reward(p, np.zeros_like(p), p, np.zeros_like(p), ctx)
+    assert len(sc2._visited) == 2
+
+
+def test_a_destroyed_coverage_run_reports_non_finite_not_a_plausible_ratio():
+    """Occupancy is an accumulator, so a swarm annihilated at step 300 still holds
+    the coverage it earned while alive. Returning that ratio reports a healthy
+    number for a dead run — the fault-reduction inversion arriving through the
+    metric instead of through the CI."""
+    sc = ALL_SCENARIOS["coverage"]()
+    rng = np.random.default_rng(0)
+    pos, vel = sc.init_state(rng, 32, 100.0)
+    ctx = ScenarioContext(step=0, total_steps=2, dt=0.1)
+    sc.step_reward(pos, vel, pos, vel, ctx)
+    assert np.isfinite(sc.terminal_metric([]))  # healthy so far
+    dead = pos.copy()
+    dead[3] = np.nan
+    sc.step_reward(dead, vel, pos, vel, ctx)
+    assert np.isnan(sc.terminal_metric([]))

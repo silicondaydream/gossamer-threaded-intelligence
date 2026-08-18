@@ -16,12 +16,16 @@ from gossamer.algorithms.coordination.orbital_market import (
     OrbitalMarketWorld,
     OrbitalWorldConfig,
     SatelliteConfig,
+    MarketAdversary,
+    NoCorruptionFiredError,
     auction_scheduler,
     fcfs_scheduler,
     greedy_soc_scheduler,
+    lying_auction_scheduler,
     poisson_workload,
     regime_label,
     scarcity_ratio,
+    verify_corruption_fired,
 )
 
 
@@ -326,3 +330,141 @@ def test_poisson_workload_is_seeded_and_bounded():
     assert [j.job_id for j in jobs] == list(range(len(jobs)))
     jobs2 = poisson_workload(np.random.default_rng(3), rate_per_s=0.1, horizon_s=500.0)
     assert jobs == jobs2
+
+
+# --------------------------------------------------------------------------
+# The corruption seam (N5). These are the locks, and the FIRST one is the
+# important one: N1's 240-cell campaign is a published pin, so the seam has to
+# be provably inert when off. Mirrors Leviathan's
+# `SeuIsOffByDefaultAndConsumesNoRandomness`.
+# --------------------------------------------------------------------------
+
+def _adv_world(scheduler, adversary=None, n_sats=4, steps=40):
+    """A deliberately ENERGY-TIGHT world: eclipse, and SOC just under s_crit.
+
+    The scarcity is the point. The solvency rule only binds where a satellite
+    cannot power the job, so in an abundant world a satellite that overestimates
+    its own battery still completes the work and belief corruption leaves no
+    trace -- the hook would look like a no-op while firing perfectly. Full
+    eclipse (no supply) plus soc0 below the s_crit=0.30 reserve is the regime
+    where a wrong belief actually buys a job the satellite cannot run.
+    """
+    jobs = [Job(job_id=i, arrival_s=float(i), duration_s=8.0, power_w=140.0,
+                data_out_mb=1.0)
+            for i in range(12)]
+    illum = _steady(steps, n_sats, 0.0)          # eclipse: nothing coming in
+    cfg = OrbitalWorldConfig(
+        n_sats=n_sats, dt=1.0,
+        sat=SatelliteConfig(soc0=0.25, battery_j=5.0e3),
+        params=OrbitalMarketParams())
+    w = OrbitalMarketWorld(cfg, jobs, scheduler, illum,
+                           np.ones_like(illum, dtype=bool), adversary=adversary)
+    for _ in range(steps):
+        w.step()
+    return w
+
+
+def test_a_disabled_adversary_is_the_no_adversary_path_exactly():
+    """The pin: off must be BIT-identical, not merely similar."""
+    keys = ("jobs_delivered", "energy_drawn_j", "brownout_sat_steps",
+            "starved_job_steps", "soc_min", "job_wait_s_mean",
+            "thermal_violation_sat_steps")
+    none_m = _adv_world(auction_scheduler, None).metrics()
+    for disabled in (MarketAdversary(),
+                     # enabled=False for every shape of "configured but inert"
+                     MarketAdversary(faulty_fraction=0.5),
+                     MarketAdversary(view_soc_error=0.4),
+                     MarketAdversary(faulty_fraction=0.5, bid_inflation=1.0)):
+        assert not disabled.enabled
+        m = _adv_world(auction_scheduler, disabled).metrics()
+        for k in keys:
+            assert m[k] == none_m[k], f"{disabled} moved {k}"
+
+
+def test_a_disabled_adversary_draws_no_randomness():
+    """`marked` must not touch a generator when off.
+
+    A generator constructed-but-unused is harmless today and a renumbering bug
+    the moment anything else shares the stream, which is exactly how the
+    published-number traps in this repo have started.
+    """
+    assert MarketAdversary().marked(81).size == 0
+    assert MarketAdversary(faulty_fraction=0.5).marked(81).size == 0
+
+
+def test_view_corruption_fires_and_reports_its_evidence():
+    adv = MarketAdversary(faulty_fraction=0.5, view_soc_error=0.5, seed=2)
+    w = _adv_world(auction_scheduler, adv)
+    m = w.metrics()
+    assert m["n_faulty_sats"] == 2
+    assert m["view_corruptions_total"] > 0
+
+
+def test_corruption_defeats_the_solvency_rule():
+    """The mechanism, asserted directly: a wrong belief buys an illegal bid.
+
+    Belief is corrupted; physics is NOT. In this eclipse-and-low-SOC world the
+    honest auction refuses to start anything at all -- the reserve price is doing
+    its job. The corrupted satellites believe they are charged, bid, win, and
+    then starve on jobs they cannot power. That gap is the whole attack, and it
+    is why the hook rewrites the VIEW rather than `self.soc`: had it written the
+    world's state, the satellite would be genuinely charged, the run would look
+    healthy, and the "attack" would be a relabelled outcome.
+    """
+    adv = MarketAdversary(faulty_fraction=0.5, view_soc_error=0.9, seed=2)
+    honest = _adv_world(auction_scheduler, None).metrics()
+    attacked = _adv_world(auction_scheduler, adv).metrics()
+
+    assert honest["jobs_started"] == 0, \
+        "the honest solvency rule should refuse every bid here; if it does not, " \
+        "this world is not scarce and the test cannot detect the attack"
+    assert attacked["jobs_started"] > 0, "corruption bought no illegal assignment"
+    assert attacked["starved_job_steps"] > honest["starved_job_steps"]
+    assert attacked["brownout_sat_steps"] > honest["brownout_sat_steps"]
+
+
+def test_the_same_adversary_is_deterministic():
+    adv = MarketAdversary(faulty_fraction=0.5, view_soc_error=0.5, seed=7)
+    a = _adv_world(auction_scheduler, adv).metrics()
+    b = _adv_world(auction_scheduler, adv).metrics()
+    assert a == b
+
+
+def test_a_fraction_that_marks_nobody_refuses():
+    """Guardrail 4: a corruption that cannot fire reads as robustness."""
+    with pytest.raises(ValueError, match="ZERO"):
+        MarketAdversary(faulty_fraction=0.001, view_soc_error=0.4).marked(81)
+
+
+def test_verify_refuses_a_view_attack_that_never_fired():
+    adv = MarketAdversary(faulty_fraction=0.5, view_soc_error=0.4)
+    with pytest.raises(NoCorruptionFiredError):
+        verify_corruption_fired({"view_corruptions_total": 0}, adv)
+
+
+def test_verify_refuses_a_bid_attack_on_a_scheduler_that_takes_no_bids():
+    """FCFS is immune BY CONSTRUCTION, which is not a robustness result."""
+    liar = MarketAdversary(faulty_fraction=0.5, bid_inflation=3.0)
+    with pytest.raises(NoCorruptionFiredError, match="no bid was corrupted"):
+        verify_corruption_fired({"view_corruptions_total": 0}, liar, {})
+
+
+def test_an_honest_liar_reduces_to_the_plain_auction():
+    """inflation=1.0 must be the honest auction exactly.
+
+    This is what proves `lying_auction_scheduler` shares one clearing rule with
+    `auction_scheduler` rather than carrying a divergent copy -- the trap
+    `_utilities` already closes between the auction and CP-SAT.
+    """
+    honest = MarketAdversary(faulty_fraction=0.5, bid_inflation=1.0)
+    assert not honest.corrupts_bids
+    a = _adv_world(auction_scheduler).metrics()
+    b = _adv_world(lambda v: lying_auction_scheduler(v, honest)).metrics()
+    assert a == b
+
+
+def test_bid_inflation_changes_the_clearing():
+    liar = MarketAdversary(faulty_fraction=0.5, bid_inflation=50.0, seed=1)
+    fired = {}
+    _adv_world(lambda v: lying_auction_scheduler(v, liar, fired))
+    assert fired["bid_corruptions_total"] > 0

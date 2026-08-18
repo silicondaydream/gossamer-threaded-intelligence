@@ -34,9 +34,13 @@ Baselines (:mod:`gossamer.benchmarks.baselines`, registry ``DEFAULT_BASELINES``)
 
 Use :func:`run_benchmark` / :func:`leaderboard` to execute and compare, and
 :func:`generate_leaderboard_md` to emit the paper-ready table. Both take an
-``engine=``: the default is :class:`gossamer.engine.ReferenceEngine` (pure NumPy),
-and :class:`gossamer.leviathan_engine.LeviathanEngine` runs the suite on the real
-C++ substrate — which is the only way a benchmark number is comparable to a paper.
+``engine=``, and since ``SUITE_VERSION`` 0.2.0 the default is
+:class:`gossamer.leviathan_engine.LeviathanEngine` — the real C++ substrate, and
+the only way a benchmark number is comparable to a paper. It **raises with build
+instructions rather than falling back** to :class:`gossamer.engine.ReferenceEngine`,
+because a silent substrate swap leaves no trace in the number it produces. The
+reference engine stays reachable by passing it explicitly. Running the suite at
+all therefore requires a compiled Leviathan on ``PYTHONPATH``.
 
 Three things this docstring used to claim that were not true, all fixed rather than
 reworded: it documented a ``predator_prey`` scenario that does not exist, it listed
@@ -56,6 +60,8 @@ from gossamer.benchmarks.harness import (
     SUITE_VERSION,
     BenchmarkConfig,
     BenchmarkResult,
+    ScenarioConfigConflictError,
+    apply_required_config,
     default_engine,
     generate_leaderboard_md,
     leaderboard,
@@ -70,6 +76,8 @@ __all__ = [
     "FaultModel",
     "NoFaultsFiredError",
     "SUITE_VERSION",
+    "ScenarioConfigConflictError",
+    "apply_required_config",
     "default_engine",
     "Baseline",
     "vicsek_alignment",

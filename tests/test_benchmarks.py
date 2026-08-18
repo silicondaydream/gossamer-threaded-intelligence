@@ -103,7 +103,14 @@ def test_byzantine_rejects_a_nonsense_configuration():
 @pytest.mark.parametrize("name", sorted(ALL_SCENARIOS))
 def test_every_scenario_runs_and_reports_a_finite_metric(name):
     sc = ALL_SCENARIOS[name]()
-    result = run_benchmark(sc, DEFAULT_BASELINES["random"](sc), _cfg(),
+    # `_cfg` shrinks the run for speed, but a scenario that DECLARES a required
+    # config is not valid at an arbitrary size and the harness refuses rather than
+    # silently overriding — so leave those keys alone and let the scenario supply
+    # them. Shrinking `vicsek_transition` is exactly the move that produced the
+    # degenerate substrate-validation row in the first place.
+    small = dict(num_agents=40, bound=50.0)
+    small.update(getattr(sc, "required_config", {}))
+    result = run_benchmark(sc, DEFAULT_BASELINES["random"](sc), _cfg(**small),
                            baseline_name="random")
     assert result.scenario == sc.name
     assert np.isfinite(result.metric)

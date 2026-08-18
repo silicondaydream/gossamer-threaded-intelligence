@@ -71,7 +71,9 @@ from gossamer.algorithms.coordination.hma import soc_sigmoid
 
 __all__ = [
     "Job",
+    "MarketAdversary",
     "MarketView",
+    "NoCorruptionFiredError",
     "OrbitalMarketParams",
     "OrbitalMarketWorld",
     "OrbitalWorldConfig",
@@ -81,6 +83,7 @@ __all__ = [
     "cpsat_scheduler",
     "fcfs_scheduler",
     "greedy_soc_scheduler",
+    "lying_auction_scheduler",
     "poisson_workload",
     "regime_label",
     "scarcity_ratio",
@@ -177,6 +180,103 @@ class MarketView(NamedTuple):
 Scheduler = Callable[[MarketView], Sequence[Tuple[int, int]]]
 
 
+# --------------------------------------------------------------------------
+# The corruption seam (N5). Two hooks, because they are two questions.
+# --------------------------------------------------------------------------
+
+class NoCorruptionFiredError(RuntimeError):
+    """A corruption model was configured and the run shows no evidence of it."""
+
+
+@dataclass(frozen=True)
+class MarketAdversary:
+    """Corruption on the market path: confidently wrong, or lying.
+
+    N5 asks whether a market degrades differently from a state-blind scheme when
+    its agents are *confidently wrong* rather than *visibly dead*. Neither
+    existing fault model can pose that question here, and the reason is
+    structural rather than incidental: ``ByzantineScenario.corrupt_actions``
+    rewrites acceleration arrays in the swarm harness, Leviathan's SEU model
+    flips position/velocity words inside the C++ engine, and this module is pure
+    NumPy that never imports Leviathan. A radiation batch aimed at the market
+    would therefore have applied nothing, returned a clean tie across all four
+    schedulers, and read as "markets are radiation-robust" -- the same silent
+    no-op that made the original `ByzantineScenario` a rendezvous run wearing a
+    different label.
+
+    The two hooks are deliberately NOT merged, because they differ in who is
+    deceived:
+
+    * ``view_*`` corrupts what a marked satellite BELIEVES about itself, and the
+      satellite then bids honestly on that belief. It is applied by the world, so
+      every scheduler -- auction, FCFS, greedy, CP-SAT -- eats it equally, which
+      is what makes a mechanism-vs-mechanism comparison possible. This is the SEU
+      analogue.
+    * ``bid_inflation`` corrupts what a marked satellite REPORTS while its own
+      state is intact: strategic misreporting. Only a mechanism that takes bids
+      can be lied to, so this one lives in the auction rather than the world.
+      This is the Byzantine analogue, and it is the *Stale vs. lying* question.
+
+    **Off by default, and drawing no randomness when off.** `enabled` is false
+    for a default instance and the world never constructs a generator, so every
+    pre-existing run is byte-identical -- N1's 240-cell campaign is a published
+    pin and must stay reproducible. This mirrors Leviathan's
+    `SeuIsOffByDefaultAndConsumesNoRandomness` lock.
+
+    The corruption stream is its own generator, seeded independently. The world
+    draws no randomness (the workload carries the seed), so sharing a stream
+    would renumber the workload's draws and move published numbers.
+    """
+
+    #: Fraction of satellites marked as faulty, chosen once at construction.
+    faulty_fraction: float = 0.0
+    #: Relative magnitude of the state-of-charge / thermal belief error.
+    view_soc_error: float = 0.0
+    view_temp_error_c: float = 0.0
+    #: Multiplicative factor a marked satellite applies to its own reported
+    #: utility. 1.0 is honest; >1 over-claims capability.
+    bid_inflation: float = 1.0
+    seed: int = 0
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.faulty_fraction <= 1.0:
+            raise ValueError(f"faulty_fraction must be in [0,1], got {self.faulty_fraction}")
+        if self.bid_inflation <= 0.0:
+            raise ValueError(f"bid_inflation must be > 0, got {self.bid_inflation}")
+
+    @property
+    def corrupts_view(self) -> bool:
+        return (self.faulty_fraction > 0.0
+                and (self.view_soc_error != 0.0 or self.view_temp_error_c != 0.0))
+
+    @property
+    def corrupts_bids(self) -> bool:
+        return self.faulty_fraction > 0.0 and self.bid_inflation != 1.0
+
+    @property
+    def enabled(self) -> bool:
+        return self.corrupts_view or self.corrupts_bids
+
+    def marked(self, n_sats: int) -> np.ndarray:
+        """The faulty index set, drawn once from this adversary's own stream.
+
+        Fixed for the run: a satellite whose memory is damaged stays damaged.
+        Re-drawing each step would model something else entirely (and would
+        average the damage away).
+        """
+        if not self.enabled:
+            return np.zeros(0, dtype=int)
+        k = int(round(self.faulty_fraction * n_sats))
+        if k <= 0:
+            raise ValueError(
+                f"faulty_fraction={self.faulty_fraction} over {n_sats} satellites "
+                f"marks ZERO of them, so the corruption cannot fire and the row "
+                f"would read as robustness. Raise the fraction or disable the "
+                f"adversary deliberately.")
+        rng = np.random.default_rng(self.seed)
+        return np.sort(rng.choice(n_sats, size=k, replace=False))
+
+
 def _utilities(view: MarketView) -> np.ndarray:
     """The canonical utility for every (job, sat) pair; shape (len(queue), N).
 
@@ -230,8 +330,18 @@ def auction_scheduler(view: MarketView) -> List[Tuple[int, int]]:
     """
     if not view.queue:
         return []
-    U = _utilities(view)
-    ok = _eligible(view)
+    return _clear(view, _utilities(view), _eligible(view))
+
+
+def _clear(view: MarketView, U: np.ndarray, ok: np.ndarray) -> List[Tuple[int, int]]:
+    """Greedy clearing by utility; ties break by (queue index, sat index).
+
+    Extracted so the honest and adversarial auctions share ONE clearing rule.
+    Copying it would let the two drift, and a lying-vs-honest comparison across
+    two subtly different clearing rules measures the divergence rather than the
+    lie -- the same trap `_utilities` exists to close between the auction and
+    CP-SAT.
+    """
     order = sorted(
         ((float(U[q, s]), q, s)
          for q in range(len(view.queue))
@@ -249,6 +359,69 @@ def auction_scheduler(view: MarketView) -> List[Tuple[int, int]]:
         slots[s] -= 1
         out.append((q, s))
     return out
+
+
+def lying_auction_scheduler(view: MarketView, adversary: MarketAdversary,
+                            fired: Optional[Dict[str, int]] = None,
+                            ) -> List[Tuple[int, int]]:
+    """The auction, with marked satellites over-claiming their own utility.
+
+    This is the OTHER corruption, and it is the market-specific one: the marked
+    satellite's state is intact and its belief is correct -- it simply reports a
+    bid it is not entitled to. Only a mechanism that consumes bids can be lied
+    to, which is why this is a scheduler rather than a world hook, and why an
+    honest comparison against FCFS or greedy under this model is meaningless:
+    they take no bids, so they are immune by construction rather than by merit.
+    Report it against the auction's own honest run.
+
+    The solvency rule is applied to the TRUE eligibility, not the inflated bid:
+    lying about willingness must not buy a satellite the right to bid on a job it
+    cannot power, or the adversary would be defeating the reserve price rather
+    than the ranking. That separation is the point of the model.
+
+    ``fired`` is an optional counter dict; the caller reads
+    ``fired["bid_corruptions_total"]`` as the evidence the model actually ran.
+    """
+    if not view.queue:
+        return []
+    U = _utilities(view)
+    ok = _eligible(view)
+    if adversary.corrupts_bids:
+        marked = adversary.marked(U.shape[1])
+        U = U.copy()
+        U[:, marked] *= adversary.bid_inflation
+        if fired is not None:
+            fired["bid_corruptions_total"] = (
+                fired.get("bid_corruptions_total", 0) + int(marked.size))
+    return _clear(view, U, ok)
+
+
+def verify_corruption_fired(metrics: Dict[str, object],
+                            adversary: Optional[MarketAdversary],
+                            bid_fired: Optional[Dict[str, int]] = None) -> None:
+    """Raise unless a configured adversary left measurable evidence.
+
+    The mirror of `gossamer.benchmarks.faults.FaultModel.verify`, and it exists
+    for the identical reason: an adversarial run that applied nothing produces a
+    clean, plausible result in which every scheduler ties, and that reads as
+    robustness. Call this before building a result, never after publishing one.
+    """
+    if adversary is None or not adversary.enabled:
+        return
+    if adversary.corrupts_view and not metrics.get("view_corruptions_total"):
+        raise NoCorruptionFiredError(
+            "adversary.corrupts_view is set and view_corruptions_total is 0: the "
+            "corruption never reached a scheduler, so this row is a fault-free "
+            "run under an adversarial label.")
+    if adversary.corrupts_bids:
+        n = (bid_fired or {}).get("bid_corruptions_total", 0)
+        if not n:
+            raise NoCorruptionFiredError(
+                "adversary.corrupts_bids is set and no bid was corrupted. The "
+                "likeliest cause is running a scheduler that takes no bids "
+                "(FCFS/greedy/CP-SAT are immune BY CONSTRUCTION, not by merit) "
+                "-- use lying_auction_scheduler, or compare against the "
+                "auction's own honest run.")
 
 
 def fcfs_scheduler(view: MarketView) -> List[Tuple[int, int]]:
@@ -445,9 +618,21 @@ class OrbitalMarketWorld:
 
     def __init__(self, cfg: OrbitalWorldConfig, jobs: Sequence[Job],
                  scheduler: Scheduler, illumination: np.ndarray,
-                 ground_visible: np.ndarray) -> None:
+                 ground_visible: np.ndarray,
+                 adversary: Optional["MarketAdversary"] = None) -> None:
         self.cfg = cfg
         self._sched = scheduler
+        # None and a disabled adversary take the SAME branch below: no marked
+        # set, no generator, no arithmetic on the view. That is what keeps every
+        # pre-existing run byte-identical (N1 is a published pin).
+        self._adv = adversary
+        self._marked = (adversary.marked(cfg.n_sats)
+                        if adversary is not None and adversary.enabled
+                        else np.zeros(0, dtype=int))
+        #: Evidence that the view hook actually fired, per the `FaultModel.verify`
+        #: contract: a corruption with nothing to point at is indistinguishable
+        #: from one that never ran, and both read as robustness.
+        self.view_corruptions_total = 0
         self._jobs = sorted(jobs, key=lambda j: (j.arrival_s, j.job_id))
         self._illum = np.asarray(illumination, dtype=float)
         self._gvis = np.asarray(ground_visible, dtype=bool)
@@ -495,8 +680,21 @@ class OrbitalMarketWorld:
         # 2. Scheduling. The world enforces legality; the scheduler only ranks.
         if self.queue:
             free = np.array([sat.slots - len(r) for r in self.running], dtype=int)
-            view = MarketView(now_s=now, soc=self.soc.copy(),
-                              temp_c=self.temp_c.copy(), free_slots=free.copy(),
+            believed_soc, believed_temp = self.soc.copy(), self.temp_c.copy()
+            if self._adv is not None and self._adv.corrupts_view:
+                # The BELIEF is corrupted; the world's own state is not. A marked
+                # satellite reports a battery and a temperature it does not have,
+                # then bids honestly on them -- confidently wrong, not lying, and
+                # not marked as failed. Physics below still uses `self.soc`, which
+                # is what makes the damage show up as consequences rather than as
+                # a relabelled outcome.
+                m = self._marked
+                believed_soc[m] = np.clip(
+                    believed_soc[m] + self._adv.view_soc_error, 0.0, 1.0)
+                believed_temp[m] = believed_temp[m] - self._adv.view_temp_error_c
+                self.view_corruptions_total += int(m.size)
+            view = MarketView(now_s=now, soc=believed_soc,
+                              temp_c=believed_temp, free_slots=free.copy(),
                               illumination=illum.copy(),
                               net_supply_w=sat.panel_w * illum - sat.base_load_w,
                               queue=tuple(self.queue), params=cfg.params)
@@ -618,6 +816,11 @@ class OrbitalMarketWorld:
         return {
             "market_scarcity_rho": float(rho),
             "market_regime": regime_label(rho),
+            # Evidence, always present. Zero on an un-adversarial run is the
+            # intended condition; zero on an adversarial one is a no-op, and
+            # `verify_corruption_fired` is what refuses to report it.
+            "view_corruptions_total": int(self.view_corruptions_total),
+            "n_faulty_sats": int(self._marked.size),
             "jobs_arrived": int(n_arrived),
             "jobs_started": int(self._wait_n),
             "jobs_completed": int(len(self.done) + completed_backlog),
