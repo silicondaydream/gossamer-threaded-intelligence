@@ -339,7 +339,7 @@ def test_poisson_workload_is_seeded_and_bounded():
 # `SeuIsOffByDefaultAndConsumesNoRandomness`.
 # --------------------------------------------------------------------------
 
-def _adv_world(scheduler, adversary=None, n_sats=4, steps=40):
+def _adv_world(scheduler, adversary=None, n_sats=4, steps=40, observer=None):
     """A deliberately ENERGY-TIGHT world: eclipse, and SOC just under s_crit.
 
     The scarcity is the point. The solvency rule only binds where a satellite
@@ -358,7 +358,8 @@ def _adv_world(scheduler, adversary=None, n_sats=4, steps=40):
         sat=SatelliteConfig(soc0=0.25, battery_j=5.0e3),
         params=OrbitalMarketParams())
     w = OrbitalMarketWorld(cfg, jobs, scheduler, illum,
-                           np.ones_like(illum, dtype=bool), adversary=adversary)
+                           np.ones_like(illum, dtype=bool), adversary=adversary,
+                           observer=observer)
     for _ in range(steps):
         w.step()
     return w
@@ -379,6 +380,49 @@ def test_a_disabled_adversary_is_the_no_adversary_path_exactly():
         m = _adv_world(auction_scheduler, disabled).metrics()
         for k in keys:
             assert m[k] == none_m[k], f"{disabled} moved {k}"
+
+
+def test_an_observer_sees_every_step_and_moves_no_number():
+    """The per-step hook the visualiser needs, and its non-interference pin.
+
+    Both halves matter. Without the first, an observer that silently fired zero
+    times would pass the second trivially -- a hook that never runs cannot move a
+    number, and "no frames" would read as "no interference". Without the second,
+    the hook could perturb a published pin (N1/N5 both run this world).
+    """
+    seen = []
+    watched = _adv_world(auction_scheduler, None,
+                         observer=lambda w, i: seen.append((i, float(w.soc.min()))))
+    plain = _adv_world(auction_scheduler, None)
+
+    # It fired once per step, in order, with the step index.
+    assert [i for i, _ in seen] == list(range(40))
+
+    m_watched, m_plain = watched.metrics(), plain.metrics()
+    assert set(m_watched) == set(m_plain)
+    for k in m_plain:
+        assert m_watched[k] == m_plain[k], f"observer moved {k}"
+
+
+def test_the_observer_receives_live_arrays_not_snapshots():
+    """Documents the sharp edge: the arrays are mutated in place.
+
+    `FrameWriter` relies on exactly this for the swarm path, so the orbital hook
+    matches it rather than inventing a second convention -- but a caller that
+    keeps a reference without copying gets the final state N times, which is a
+    silent way to record a flat run. Asserted so the contract is discovered by
+    reading a test rather than by shipping a flat visualisation.
+    """
+    refs, copies = [], []
+
+    def obs(w, i):
+        refs.append(w.soc)          # live reference
+        copies.append(w.soc.copy())  # snapshot
+
+    _adv_world(auction_scheduler, None, observer=obs)
+    assert all(r is refs[0] for r in refs), "the array identity should be stable"
+    # The snapshots moved even though every reference is the same object.
+    assert any(not np.array_equal(copies[0], c) for c in copies)
 
 
 def test_a_disabled_adversary_draws_no_randomness():

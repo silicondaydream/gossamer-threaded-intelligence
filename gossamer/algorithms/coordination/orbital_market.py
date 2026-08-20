@@ -619,9 +619,27 @@ class OrbitalMarketWorld:
     def __init__(self, cfg: OrbitalWorldConfig, jobs: Sequence[Job],
                  scheduler: Scheduler, illumination: np.ndarray,
                  ground_visible: np.ndarray,
-                 adversary: Optional["MarketAdversary"] = None) -> None:
+                 adversary: Optional["MarketAdversary"] = None,
+                 observer: Optional[Callable[["OrbitalMarketWorld", int], None]] = None
+                 ) -> None:
         self.cfg = cfg
         self._sched = scheduler
+        # Per-step read-only hook, called at the END of each step with (world,
+        # step_index). It exists because this world reduces everything at the
+        # end -- `soc`/`temp_c` are mutated in place and only their final
+        # reduction survives -- so a visualiser has nothing to render without it.
+        #
+        # THREE PROPERTIES, all load-bearing, all mirroring the adversary above:
+        #   * off by default and on the SAME branch as absent, so every
+        #     pre-existing run is byte-identical (N1/N5 are published pins);
+        #   * it draws no randomness and the world never reads anything back
+        #     from it, so it cannot move a number (the `metrics_registry` rule:
+        #     an observer accumulates, it never feeds the loop);
+        #   * `spec_digest()` is untouched -- an observed run is the same
+        #     experiment, watched, not a different one.
+        # The arrays handed over are LIVE and mutated in place; an observer that
+        # wants history must copy, exactly as `FrameWriter` does not.
+        self._observer = observer
         # None and a disabled adversary take the SAME branch below: no marked
         # set, no generator, no arithmetic on the view. That is what keeps every
         # pre-existing run byte-identical (N1 is a published pin).
@@ -781,6 +799,8 @@ class OrbitalMarketWorld:
                     self._downlink[s].pop(0)
 
         self._step_i += 1
+        if self._observer is not None:
+            self._observer(self, i_step)
 
     def run(self, horizon_steps: Optional[int] = None) -> Dict[str, object]:
         steps = self._illum.shape[0] if horizon_steps is None else int(horizon_steps)
