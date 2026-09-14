@@ -26,9 +26,6 @@ steps:
         set -euo pipefail
         pip install --no-cache-dir dist/*.whl
         python - <<'PY'
-        # Verify that the new Phase 2+ subpackages actually ship in the wheel.
-        # If any of these fails, find_packages() missed a subpackage (e.g.,
-        # a dir was added without __init__.py).
         for mod in (
             'gossamer.algorithms.coordination.flocking',
             'gossamer.algorithms.coordination.flocking_gnn',
@@ -58,20 +55,12 @@ steps:
             'gossamer.benchmarks.faults',
         ):
             __import__(mod)
-        # Symbol-level checks: importing a module cannot catch a function that
-        # never shipped. Each of these is consumed by Maneuver.Map, so a wheel
-        # missing one breaks the runner rather than this build.
+        import numpy as np
+        # Symbols consumed by Maneuver.Map: a missing one breaks the runner, not this build.
         from gossamer.metrics.info import collective_transfer_entropy  # noqa: F401
-        # policies.py imports these instead of reimplementing them (M6.6).
         from gossamer.algorithms.coordination.kernels import (  # noqa: F401
             boids_accel_edges, kdtree_edges,
         )
-        # gossamer 0.8: the LAST algorithms to leave the runner. TF-ACO's dense-grid
-        # stigmergy, HMA's depot steering, and the Levy/greedy DMB comparators all
-        # lived in maneuver-map's policies.py — algorithm code in the orchestration
-        # layer, which is the defect the extraction was meant to end and which had
-        # quietly regrown. policies.py imports them at module scope now, so a wheel
-        # without them breaks the runner, not this build. Assert them here.
         from gossamer.algorithms.coordination.baselines import (  # noqa: F401
             CoverageGrid, LevyState, greedy_coverage_accel, levy_flight_accel,
         )
@@ -81,25 +70,21 @@ steps:
         from gossamer.algorithms.coordination.hma import (  # noqa: F401
             depot_steering_accel, ring_depots,
         )
-        # gossamer 0.9: the orbital workload market (roadmap 4.1, N1's core).
-        # The schedulers are the N1 experiment's whole comparator set, so a
-        # wheel that ships without any one of them cannot run the experiment
-        # that cites it.
         from gossamer.algorithms.coordination.orbital_market import (  # noqa: F401
             Job, MarketView, OrbitalMarketWorld, OrbitalWorldConfig,
             SatelliteConfig, auction_scheduler, cpsat_scheduler,
             fcfs_scheduler, greedy_soc_scheduler, poisson_workload,
             regime_label, scarcity_ratio,
         )
-        # The benchmark harness steps through this, not a private copy (M6.7).
         from gossamer.engine import PhysicsEngine, ReferenceEngine  # noqa: F401
-        # The only task whose Q actually responds to tau_sec (P4b).
         from gossamer.tasks import ALL_TASKS, TrackingRendezvousTask  # noqa: F401
         assert "tracking_rendezvous" in ALL_TASKS
+        from gossamer.leviathan_engine import LeviathanEngine  # noqa: F401
+        from gossamer.benchmarks.cli import main as _bench_main  # noqa: F401
 
-        # The benchmark is the N2 moat and ships as a public package, but the gate
-        # only ever checked that `gossamer.benchmarks` IMPORTS — so a wheel could
-        # ship with the whole public API missing and pass.
+        # Registry SET assertions: losing a member is a build failure, adding one
+        # is a deliberate two-line change. A dropped member does not degrade --
+        # it stops being evaluated and the leaderboard still looks complete.
         from gossamer.benchmarks import (  # noqa: F401
             ALL_SCENARIOS, DEFAULT_BASELINES, BenchmarkConfig,
             generate_leaderboard_md, leaderboard, run_benchmark,
@@ -112,12 +97,6 @@ steps:
             "random", "gossamer_flocking", "greedy", "vicsek_alignment"
         }, DEFAULT_BASELINES
 
-        # ByzantineScenario was a NO-OP: it marked its adversaries and the harness
-        # never read the marks, so the "byzantine" leaderboard row was a plain
-        # rendezvous run. The corruption hook is what makes it adversarial at all,
-        # and it is reached through the Scenario base class — exactly the kind of
-        # surface that fails silently on a stale wheel and reads as a result.
-        import numpy as np
         from gossamer.benchmarks.scenarios import ByzantineScenario
         _sc = ByzantineScenario(byzantine_fraction=1.0, adversary="inverted")
         _sc.init_state(np.random.default_rng(0), num_agents=4, bound=10.0)
@@ -125,25 +104,10 @@ steps:
             _sc.corrupt_actions(np.ones((4, 3)), np.random.default_rng(0), None), -1.0
         ), "ByzantineScenario is not corrupting actions — the benchmark row is a lie"
 
-        # The adapter that lets the benchmark run on the real substrate. Its absence
-        # is why every benchmark number to date came from ReferenceEngine.
-        from gossamer.leviathan_engine import LeviathanEngine  # noqa: F401
-        from gossamer.benchmarks.cli import main as _bench_main  # noqa: F401
-
-        # THE DELAYED VIEW (0.11.0). This is the mechanism the entire DCC corpus
-        # measures, and it lived in the Maneuver.Map runner until now — which is
-        # precisely why it needs a gate here: `runner.py` imports it from the WHEEL,
-        # so a wheel without it does not degrade, it fails to start the worker after
-        # the job array has been queued and billed. `orrery.benchmarks.dcc_delay`
-        # imports it too, so a stale wheel silently removes the benchmark's crown
-        # -jewel row as well.
+        # Behavioural checks below: each property adds no importable name, so only
+        # exercising it can tell a current wheel from a stale one.
         from gossamer.communication import (  # noqa: F401
             DelayedView, gating_enabled, resolve_delay_steps)
-        # Behavioural, not symbol-level: the per-agent delay axis (roadmap 20) adds
-        # no importable name of its own — it is a keyword argument — so only
-        # exercising it can tell a 0.11.0 wheel from a 0.10.0 one. The uniform case
-        # must also still reduce to the scalar path, which is the property that
-        # keeps every published delay number where it is.
         _n = 3
         _v = DelayedView({}, dt=1.0, num_agents=_n, prediction=None,
                          rng=np.random.default_rng(0),
@@ -151,51 +115,32 @@ steps:
         for _s in range(4):
             _vp, _, _ = _v.perceive(np.full((_n, 3), float(_s)), np.zeros((_n, 3)))
         assert list(_vp[:, 0]) == [3.0, 2.0, 1.0], (
-            f"per-agent delay offsets are not being applied ({_vp[:, 0]}) — this "
-            f"wheel predates 0.11.0 and the measured delay axis is a no-op")
+            f"per-agent delay offsets not applied ({_vp[:, 0]}) — pre-0.11.0 wheel, "
+            f"the measured delay axis is a no-op")
 
-        # THE CRDT INTENT-ROUTING LAYER (N3). A SET assertion on the policy
-        # registry, for the same reason the scenario and baseline registries get
-        # one. `orrery.benchmarks.crdt_intent` imports this lazily across the
-        # repo seam, so a stale wheel does not degrade the N3 environment -- it
-        # raises inside a campaign cell, after the grid has been dispatched.
         from gossamer.algorithms.coordination.intent_routing import (  # noqa: F401
             ROUTING_POLICIES, IntentReplica, PRIORITY_ORDERS, prioritised)
         assert set(ROUTING_POLICIES) == {
             "no_relay", "full_state", "delta_log", "digest"
         }, ROUTING_POLICIES
         assert set(PRIORITY_ORDERS) == {"newest_first", "oldest_first"}, PRIORITY_ORDERS
-
-        # Behavioural, because the property that matters adds no importable name:
-        # the digest must advertise a CONTIGUOUS PREFIX. A wheel whose digest
-        # reported the maximum sequence held would make peers withhold a gap
-        # forever -- silent, permanent divergence that reads as a bandwidth
-        # saving, and the only symptom is a convergence number nobody can
-        # reproduce.
         _src, _holder = IntentReplica(9), IntentReplica(0)
         _u = [_src.author_update(k, float(k), "add", ("c", k)) for k in (1, 2, 3)]
-        _holder.apply(_u[0]); _holder.apply(_u[2])          # a hole at seq 2
+        _holder.apply(_u[0]); _holder.apply(_u[2])
         assert _holder.digest() == {9: 1}, (
-            f"digest jumped a gap ({_holder.digest()}) -- this wheel's "
-            f"anti-entropy can withhold an update permanently")
+            f"digest jumped a gap ({_holder.digest()}) — this wheel's anti-entropy "
+            f"can withhold an update permanently")
 
-        # The criticality ladder (roadmap 18). It is what gives the DMB toolkit a
-        # consumer, and `n2_criticality.py` imports it from the wheel.
         from gossamer.benchmarks.criticality import (  # noqa: F401
             CriticalitySpec, audit_ladder, binder_crossing, reduce_ladder, run_cell)
         from gossamer.benchmarks.baselines import delayed_view_baseline  # noqa: F401
-        # Behavioural: the resize must hold the validated DENSITY, or a
-        # finite-size ladder built on this wheel measures density instead of size.
         from gossamer.benchmarks.scenarios import VicsekTransitionScenario as _VT
         _base, _big = _VT().required_config, _VT(num_agents=800).required_config
         assert _big["num_agents"] == 800
         _rho = lambda c: c["num_agents"] / (2.0 * c["bound"]) ** 3
         assert abs(_rho(_big) / _rho(_base) - 1.0) < 1e-9, (
-            "the sized Vicsek scenario is not density-matched; an N-ladder on "
-            "this wheel measures the wrong axis")
-
-        # The harness observer hook, and the refusal that replaced a silent zero.
-        # `record_trajectory=False` used to return metric=0.0 with nothing raised.
+            "sized Vicsek scenario is not density-matched; an N-ladder on this "
+            "wheel measures the wrong axis")
         try:
             run_benchmark(_VT(), DEFAULT_BASELINES["vicsek_alignment"](_VT()),
                           BenchmarkConfig(steps=2, record_trajectory=False))
@@ -204,40 +149,23 @@ steps:
         else:
             raise AssertionError(
                 "this wheel still scores a no-trajectory run as 0.0 instead of "
-                "refusing it -- a publishable-looking total coordination failure")
+                "refusing it — a publishable-looking total coordination failure")
 
-        # The standardized fault models (0.11.0). A SET assertion, like the scenario
-        # and baseline registries above: adding a fault model is a deliberate
-        # two-line change and losing one is a build failure. A missing fault row does
-        # not degrade — it silently stops being evaluated, and the leaderboard still
-        # looks complete.
         from gossamer.benchmarks.faults import (  # noqa: F401
             FAULT_MODELS, FaultModel, NoFaultsFiredError)
         assert set(FAULT_MODELS) == {
             "none", "fail_stop", "seu", "seu_significant", "seu_unprotected",
         }, f"fault model registry drifted: {sorted(FAULT_MODELS)}"
-        # And the anti-no-op guard must actually refuse. This is the property the
-        # whole registry exists for: a fault row that fired nothing must not be
-        # reportable, because a fault-free run under a fault label reads as
-        # robustness (this is the ByzantineScenario failure, generalized).
         _refused = False
         try:
             FAULT_MODELS["seu"].verify({"seu_flips_total": 0.0})
         except NoFaultsFiredError:
             _refused = True
-        assert _refused, ("a fault model with ZERO fired faults was accepted — the "
-                          "no-op guard is not wired")
+        assert _refused, "a fault model with ZERO fired faults was accepted"
 
-        # The single-substrate story (suite 0.2.0). `default_engine()` must resolve to
-        # the COMPILED engine, never the pure-NumPy reference — the wheel is what the
-        # papers pin, and a benchmark defaulting to a substrate the papers do not use is
-        # the hole this closed. We only assert the symbol and the suite version here:
-        # this build step has no compiled engine, and default_engine() rightly raises
-        # without one, which is itself the behaviour under test.
-        from gossamer.benchmarks import SUITE_VERSION, default_engine
+        from gossamer.benchmarks import SUITE_VERSION, default_engine  # noqa: F401
         assert SUITE_VERSION == "0.3.0", f"benchmark suite version drifted: {SUITE_VERSION}"
 
-        # suite 0.3.0 invariants; both regress silently (leaderboard stays full).
         from gossamer.benchmarks import ScenarioContext, apply_required_config
         from gossamer.benchmarks.scenarios import ALL_SCENARIOS as _SC
         _vic = _SC["vicsek_transition"]()
