@@ -201,18 +201,16 @@ def run_benchmark(
     handed over are the LIVE ones and are overwritten next step, so an observer
     keeping history must copy.
     """
-    engine = engine if engine is not None else default_engine()
+    # Config is validated BEFORE a substrate is resolved: this says nothing about
+    # the engine, and needing a compiled one to reject a bad config is what broke
+    # the publish gate, which runs on python:3.10-slim.
     if not config.record_trajectory:
-        # Every `terminal_metric` reduces the trajectory and returns 0.0 for an
-        # empty one, so this combination produced a plausible, publishable-looking
-        # total-coordination-failure with nothing raised. Nothing in the shipped
-        # paths sets it, which is precisely why it survived: a default that cannot
-        # fail a test is this stack's house bug (DOCS 4). Refused by name.
         raise ValueError(
             "record_trajectory=False cannot produce a metric: every scenario's "
             "terminal_metric() reduces the recorded trajectory and an empty one "
             "reduces to 0.0, which is indistinguishable from total failure. If "
             "you want the run without the reduction, pass an observer.")
+    engine = engine if engine is not None else default_engine()
     # Applied HERE rather than in `leaderboard()` so it holds for every caller —
     # a scenario's validity requirement that only the leaderboard path honours is
     # the same trust-the-caller arrangement that failed the first time.
