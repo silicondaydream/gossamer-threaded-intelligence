@@ -87,6 +87,9 @@ class BenchmarkConfig:
     dt: float = 0.1
     bound: float = 100.0
     seed: int = 42
+    #: The terminal metric is computed FROM the trajectory, so turning this off
+    #: does not save work -- it deletes the answer. `run_benchmark` refuses it
+    #: rather than returning the 0.0 an empty trajectory reduces to; see there.
     record_trajectory: bool = True
     # Advisory only. Leviathan does not clamp speed, so neither does the harness;
     # baselines that want a speed limit must enforce it in the acceleration they
@@ -174,6 +177,7 @@ def run_benchmark(
     config: BenchmarkConfig,
     baseline_name: str = "baseline",
     engine: Optional[PhysicsEngine] = None,
+    observer: Optional[Callable[[int, np.ndarray, np.ndarray], None]] = None,
 ) -> BenchmarkResult:
     """Run a single scenario + baseline combination end to end.
 
@@ -186,8 +190,29 @@ def run_benchmark(
 
     The scenario owns the initial state, so the engine is created and then
     ``set_state``'d rather than being allowed to randomise its own.
+
+    ``observer`` is called at the end of each step with ``(step, pos, vel)``. It
+    exists because this harness REDUCES: ``terminal_metric`` collapses the whole
+    run to one scalar, so a caller wanting the order parameter's *fluctuations*
+    (susceptibility, Binder cumulant) had nothing to read. It follows the
+    ``OrbitalMarketWorld`` observer's discipline exactly -- **off by default on
+    the same branch as absent**, so every leaderboard number is byte-identical
+    with and without it; it draws no randomness and it is read-only. The arrays
+    handed over are the LIVE ones and are overwritten next step, so an observer
+    keeping history must copy.
     """
     engine = engine if engine is not None else default_engine()
+    if not config.record_trajectory:
+        # Every `terminal_metric` reduces the trajectory and returns 0.0 for an
+        # empty one, so this combination produced a plausible, publishable-looking
+        # total-coordination-failure with nothing raised. Nothing in the shipped
+        # paths sets it, which is precisely why it survived: a default that cannot
+        # fail a test is this stack's house bug (DOCS 4). Refused by name.
+        raise ValueError(
+            "record_trajectory=False cannot produce a metric: every scenario's "
+            "terminal_metric() reduces the recorded trajectory and an empty one "
+            "reduces to 0.0, which is indistinguishable from total failure. If "
+            "you want the run without the reduction, pass an observer.")
     # Applied HERE rather than in `leaderboard()` so it holds for every caller —
     # a scenario's validity requirement that only the leaderboard path honours is
     # the same trust-the-caller arrangement that failed the first time.
@@ -244,6 +269,8 @@ def run_benchmark(
             total_reward += float(np.sum(r))
             if config.record_trajectory:
                 trajectory.append({"pos": pos.copy(), "vel": vel.copy()})
+            if observer is not None:
+                observer(step, pos, vel)
             prev_pos = pos
             prev_vel = vel
         # Read the evidence BEFORE the sim is destroyed. `verify` raises when the

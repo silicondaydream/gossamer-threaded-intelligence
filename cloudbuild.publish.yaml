@@ -154,6 +154,58 @@ steps:
             f"per-agent delay offsets are not being applied ({_vp[:, 0]}) — this "
             f"wheel predates 0.11.0 and the measured delay axis is a no-op")
 
+        # THE CRDT INTENT-ROUTING LAYER (N3). A SET assertion on the policy
+        # registry, for the same reason the scenario and baseline registries get
+        # one. `orrery.benchmarks.crdt_intent` imports this lazily across the
+        # repo seam, so a stale wheel does not degrade the N3 environment -- it
+        # raises inside a campaign cell, after the grid has been dispatched.
+        from gossamer.algorithms.coordination.intent_routing import (  # noqa: F401
+            ROUTING_POLICIES, IntentReplica, PRIORITY_ORDERS, prioritised)
+        assert set(ROUTING_POLICIES) == {
+            "no_relay", "full_state", "delta_log", "digest"
+        }, ROUTING_POLICIES
+        assert set(PRIORITY_ORDERS) == {"newest_first", "oldest_first"}, PRIORITY_ORDERS
+
+        # Behavioural, because the property that matters adds no importable name:
+        # the digest must advertise a CONTIGUOUS PREFIX. A wheel whose digest
+        # reported the maximum sequence held would make peers withhold a gap
+        # forever -- silent, permanent divergence that reads as a bandwidth
+        # saving, and the only symptom is a convergence number nobody can
+        # reproduce.
+        _src, _holder = IntentReplica(9), IntentReplica(0)
+        _u = [_src.author_update(k, float(k), "add", ("c", k)) for k in (1, 2, 3)]
+        _holder.apply(_u[0]); _holder.apply(_u[2])          # a hole at seq 2
+        assert _holder.digest() == {9: 1}, (
+            f"digest jumped a gap ({_holder.digest()}) -- this wheel's "
+            f"anti-entropy can withhold an update permanently")
+
+        # The criticality ladder (roadmap 18). It is what gives the DMB toolkit a
+        # consumer, and `n2_criticality.py` imports it from the wheel.
+        from gossamer.benchmarks.criticality import (  # noqa: F401
+            CriticalitySpec, audit_ladder, binder_crossing, reduce_ladder, run_cell)
+        from gossamer.benchmarks.baselines import delayed_view_baseline  # noqa: F401
+        # Behavioural: the resize must hold the validated DENSITY, or a
+        # finite-size ladder built on this wheel measures density instead of size.
+        from gossamer.benchmarks.scenarios import VicsekTransitionScenario as _VT
+        _base, _big = _VT().required_config, _VT(num_agents=800).required_config
+        assert _big["num_agents"] == 800
+        _rho = lambda c: c["num_agents"] / (2.0 * c["bound"]) ** 3
+        assert abs(_rho(_big) / _rho(_base) - 1.0) < 1e-9, (
+            "the sized Vicsek scenario is not density-matched; an N-ladder on "
+            "this wheel measures the wrong axis")
+
+        # The harness observer hook, and the refusal that replaced a silent zero.
+        # `record_trajectory=False` used to return metric=0.0 with nothing raised.
+        try:
+            run_benchmark(_VT(), DEFAULT_BASELINES["vicsek_alignment"](_VT()),
+                          BenchmarkConfig(steps=2, record_trajectory=False))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(
+                "this wheel still scores a no-trajectory run as 0.0 instead of "
+                "refusing it -- a publishable-looking total coordination failure")
+
         # The standardized fault models (0.11.0). A SET assertion, like the scenario
         # and baseline registries above: adding a fault model is a deliberate
         # two-line change and losing one is a build failure. A missing fault row does

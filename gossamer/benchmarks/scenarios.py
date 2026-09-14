@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 from scipy.spatial import cKDTree
@@ -365,10 +365,31 @@ class VicsekTransitionScenario(Scenario):
     #: sets a conflicting value rather than silently overriding one.
     required_config: Dict[str, object] = {"num_agents": 200, "bound": 22.0}
 
-    def __init__(self, noise_eta: float = 0.0):
+    #: Number density the validated config encodes, agents per unit VOLUME.
+    #: A finite-size ladder must hold this fixed: growing N at a fixed bound
+    #: densifies the swarm, so the curve measures density and not size -- the
+    #: same rule `benchmarks/scalability` already follows for the engine sweep.
+    VALIDATED_DENSITY = 200.0 / (2.0 * 22.0) ** 3
+
+    def __init__(self, noise_eta: float = 0.0,
+                 num_agents: Optional[int] = None):
+        """``num_agents`` resizes the scenario AT THE VALIDATED DENSITY.
+
+        It is the only supported way to move N, and it recomputes ``bound`` so
+        the density cannot drift: a caller who instead sets ``num_agents`` on
+        the config is refused by ``apply_required_config``, which is the guard
+        that already caught this row running 100x too sparse. Leaving it ``None``
+        is the published row, byte-identical.
+        """
         if noise_eta < 0.0:
             raise ValueError(f"noise_eta must be >= 0, got {noise_eta}")
         self.noise_eta = float(noise_eta)
+        if num_agents is not None:
+            n = int(num_agents)
+            if n < 2:
+                raise ValueError(f"num_agents must be >= 2, got {num_agents}")
+            bound = 0.5 * (n / self.VALIDATED_DENSITY) ** (1.0 / 3.0)
+            self.required_config = {"num_agents": n, "bound": float(bound)}
 
     def init_state(self, rng, num_agents, bound):
         pos = rng.uniform(-bound, bound, size=(num_agents, 3))

@@ -179,9 +179,68 @@ DEFAULT_BASELINES = {
 }
 
 
+def delayed_view_baseline(baseline: Baseline, delay_steps: int, dt: float,
+                          num_agents: int,
+                          rng: "np.random.Generator") -> Baseline:
+    """Run ``baseline`` on a DELAYED view of its peers, actuating on true state.
+
+    This is the DCC mechanism -- ``gossamer.communication.delayed_view`` -- put
+    behind a benchmark baseline, so the delay axis can be swept against a
+    scenario whose transition the suite has already validated. Gating,
+    prediction and sensing noise are all off: this wrapper exists to isolate
+    STALENESS, and each of those would be a second axis moving at the same time.
+
+    **The re-actuation is not optional and is the whole trap.** The primitive
+    chooses a desired velocity from the delayed view and returns
+    ``a = (desired - view_vel)/dt``. Applying that to the engine's TRUE velocity
+    leaves a ``(view_vel - true_vel)`` residual that injects energy every step;
+    on a substrate that does not clamp speed -- which is all three of ours -- the
+    swarm diverges to NaN. So the desired velocity is recovered and re-issued
+    against the true velocity, exactly as the delay-coupled runner does. An
+    agent is always assumed to know its OWN state; only its peers are stale.
+
+    The wrapper is stateful (it owns the ring) and therefore single-use: build
+    one per run, like every other baseline factory here.
+    """
+    import numpy as _np
+
+    from gossamer.communication.delayed_view import DelayedView
+
+    steps = int(delay_steps)
+    if steps < 0:
+        raise ValueError(f"delay_steps must be non-negative, got {delay_steps}")
+    # `coupling_delay_steps` is the key `resolve_delay_steps` reads. Writing
+    # `comm_latency_steps` here instead -- the engine's spelling, and the obvious
+    # guess -- produced a view with delay 0 and NO ERROR: the whole ladder came
+    # back byte-identical at every delay, which reads as "delay does not affect
+    # ordering" and is the same unknown-key failure that left the `vicsek`
+    # algorithm block inert for months. Hence the assert below: the axis must
+    # confirm it was understood, not merely be requested.
+    view = DelayedView({"coupling_delay_steps": str(steps)}, float(dt),
+                       int(num_agents), None, rng)
+    if view.delay_steps != steps:
+        raise ValueError(
+            f"requested a delay of {steps} steps and the view resolved "
+            f"{view.delay_steps}. The config key was not understood, or the "
+            f"DCC_MAX_DELAY_STEPS cap applied. A silently-zero delay axis is "
+            f"indistinguishable from a measurement that delay does not matter.")
+    if view.gated:  # pragma: no cover - the config above cannot enable gating
+        raise AssertionError("delivery gating must be off for a pure delay axis")
+    step_dt = max(float(dt), 1e-9)
+
+    def _f(pos, vel, r):
+        view_pos, view_vel, _ = view.perceive(pos, vel)
+        accel = _np.asarray(baseline(view_pos, view_vel, r), dtype=float)
+        desired = view_vel + accel * step_dt
+        return (desired - vel) / step_dt
+
+    return _f
+
+
 __all__ = [
     "Baseline",
     "DEFAULT_BASELINES",
+    "delayed_view_baseline",
     "coverage_walker",
     "do_nothing_baseline",
     "gossamer_flocking",
