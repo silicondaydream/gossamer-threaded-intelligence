@@ -512,3 +512,25 @@ def test_bid_inflation_changes_the_clearing():
     fired = {}
     _adv_world(lambda v: lying_auction_scheduler(v, liar, fired))
     assert fired["bid_corruptions_total"] > 0
+
+
+def test_the_per_step_brownout_mask_is_the_counter_split_by_satellite():
+    """`brownout_now` is the same decision that increments the counter.
+
+    Summed over a run it must equal `brownout_sat_steps` exactly, step by step,
+    or a viewer colouring satellites by it would show brownouts the metrics do
+    not count (or the reverse). Run in the energy-tight world, where brownouts
+    actually happen -- in an abundant one the mask is all-False and the equality
+    would hold trivially.
+    """
+    per_step, counter = [], []
+    w = _adv_world(fcfs_scheduler, None,
+                   observer=lambda w, i: (per_step.append(w.brownout_now.copy()),
+                                          counter.append(w.brownout_sat_steps)))
+    total = int(np.sum(per_step))
+    assert total > 0, "degenerate: no brownouts, so the equality below proves nothing"
+    assert total == w.metrics()["brownout_sat_steps"]
+    # Step by step, not just in total: each step's mask is that step's increment,
+    # which is also what proves the mask is reset rather than accumulated.
+    increments = np.diff([0] + counter)
+    assert [int(m.sum()) for m in per_step] == increments.tolist()

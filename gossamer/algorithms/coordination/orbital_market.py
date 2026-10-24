@@ -673,6 +673,13 @@ class OrbitalMarketWorld:
         self.energy_drawn_j = 0.0        # base + compute actually consumed
         self.thermal_violation_sat_steps = 0
         self.brownout_sat_steps = 0
+        # Which satellites browned out on the step just taken: the SAME decision
+        # that increments brownout_sat_steps, kept per satellite so an observer
+        # (the viewer's capture) can show it without re-deriving the accounting
+        # rule -- a post-step SOC check is off by one step (the decision is made
+        # on the pre-draw bank) and would be a second copy free to drift.
+        # Observation only: draws nothing, changes no count.
+        self.brownout_now = np.zeros(n, dtype=bool)
         self.starved_job_steps = 0
         self._wait_sum_s = 0.0           # arrival -> start, over started jobs
         self._wait_n = 0
@@ -732,6 +739,7 @@ class OrbitalMarketWorld:
                 self.queue = [j for q, j in enumerate(self.queue) if q not in taken]
 
         # 3+4. Power and thermal, satellite by satellite in index order.
+        self.brownout_now[:] = False
         for s in range(cfg.n_sats):
             supply_j = sat.panel_w * float(illum[s]) * dt
             bank_j = float(self.soc[s]) * sat.battery_j + supply_j
@@ -740,6 +748,7 @@ class OrbitalMarketWorld:
             brownout = bank_j < sat.base_load_w * dt
             if brownout:
                 self.brownout_sat_steps += 1
+                self.brownout_now[s] = True
                 bank_j = max(0.0, bank_j)  # whatever trickles in stays banked
             else:
                 bank_j -= sat.base_load_w * dt
