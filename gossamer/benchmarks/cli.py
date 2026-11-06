@@ -30,7 +30,14 @@ from gossamer.benchmarks.scenarios import ALL_SCENARIOS
 
 def _build_engine(name: str):
     if name == "reference":
-        return None  # the harness default
+        # EXPLICITLY the reference substrate. This used to return None "for the
+        # harness default" -- but the harness default became the compiled engine
+        # in suite 0.2.0, so `--engine reference` (the CLI's own default) asked
+        # for Leviathan and raised wherever it was not built, i.e. for exactly the
+        # outsider this command exists for. Every row records `engine`, so the
+        # choice is visible in the output either way.
+        from gossamer.engine import ReferenceEngine
+        return ReferenceEngine()
     if name == "leviathan":
         from gossamer.leviathan_engine import LeviathanEngine
         return LeviathanEngine()

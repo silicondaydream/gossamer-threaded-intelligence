@@ -94,6 +94,7 @@ def test_benchmark_accepts_an_injected_engine():
     assert np.isfinite(result.metric)
 
 
+@pytest.mark.substrate
 def test_benchmark_is_deterministic_for_a_seed():
     scenario_cls = ALL_SCENARIOS["rendezvous"]
     from gossamer.benchmarks.baselines import DEFAULT_BASELINES

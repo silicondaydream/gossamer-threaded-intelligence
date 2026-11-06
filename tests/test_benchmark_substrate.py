@@ -36,8 +36,22 @@ from gossamer.benchmarks import (
 from gossamer.benchmarks.harness import SUITE_VERSION, default_engine
 from gossamer.engine import ReferenceEngine
 
-leviathan = pytest.importorskip(
-    "leviathan", reason="the benchmark's default substrate is the compiled engine")
+# Every test here is about the compiled engine itself. A module-level
+# importorskip would skip at COLLECTION, before `-m "not substrate"` can
+# deselect the module, and ARBORIA_REQUIRE_TESTS turns that skip into a failure
+# of a job that never asked to run these. A skipif is evaluated only for tests
+# that are actually selected -- and still fails under ARBORIA_REQUIRE_TESTS when
+# someone selects them without the engine built.
+try:
+    import leviathan
+except ImportError:  # pragma: no cover - exercised only without the compiled engine
+    leviathan = None
+
+pytestmark = [
+    pytest.mark.substrate,
+    pytest.mark.skipif(leviathan is None,
+                       reason="the benchmark's default substrate is the compiled engine"),
+]
 
 from gossamer.leviathan_engine import LeviathanEngine  # noqa: E402
 

@@ -72,6 +72,7 @@ def test_zero_fraction_is_the_identity():
     assert np.allclose(sc.corrupt_actions(accel, rng, None), 1.0)
 
 
+@pytest.mark.substrate
 def test_byzantine_now_scores_worse_than_clean_rendezvous():
     """The end-to-end proof that the row is no longer a lie.
 
@@ -100,6 +101,7 @@ def test_byzantine_rejects_a_nonsense_configuration():
 
 # --- the honest scenarios are unaffected -------------------------------------
 
+@pytest.mark.substrate
 @pytest.mark.parametrize("name", sorted(ALL_SCENARIOS))
 def test_every_scenario_runs_and_reports_a_finite_metric(name):
     sc = ALL_SCENARIOS[name]()
@@ -125,6 +127,7 @@ def test_corrupt_actions_is_the_identity_for_honest_scenarios():
 
 # --- dispersal must not allocate a full pairwise tensor ----------------------
 
+@pytest.mark.substrate
 def test_dispersal_scales_past_the_pairwise_tensor():
     """It used to build (N, N, 3) — 2.4 TB at its own documented 10k ceiling."""
     sc = ALL_SCENARIOS["dispersal"]()
@@ -150,6 +153,7 @@ def test_coverage_walker_does_not_share_state_between_runs():
 
 # --- the leaderboard ---------------------------------------------------------
 
+@pytest.mark.substrate
 def test_leaderboard_runs_the_matrix_and_renders():
     small = _cfg(num_agents=20, steps=15)
     results = leaderboard(
@@ -176,6 +180,7 @@ def _psi_run(eta, steps=400, n=200, bound=22.0, radius=10.0, seed=7):
                          baseline_name="vicsek_alignment").metric
 
 
+@pytest.mark.substrate
 def test_substrate_reproduces_the_order_disorder_transition():
     """THE validation row: order at low noise, disorder at high noise.
 
@@ -194,6 +199,7 @@ def test_substrate_reproduces_the_order_disorder_transition():
     assert disordered < mid < ordered, "no monotone transition between the corners"
 
 
+@pytest.mark.substrate
 def test_boids_is_anti_polar_here_and_that_is_not_a_substrate_defect():
     """Boids must NOT be used as the ordering instrument.
 

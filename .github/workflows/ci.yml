@@ -1,0 +1,80 @@
+# Gossamer's public CI: every test that does not need the compiled engine.
+#
+# Why not the whole suite: the benchmark's default substrate is the compiled
+# Leviathan engine, which deliberately does NOT fall back to ReferenceEngine, and
+# leviathan-engine is a private repo this public job cannot check out. The
+# previous workflow tried, and was deleted for it. So this job runs everything
+# else, and is explicit about what it leaves out:
+#
+#   * Tests that need the engine carry `@pytest.mark.substrate` and are
+#     DESELECTED by marker. Deselection is counted in the log; it is not a skip.
+#   * ARBORIA_REQUIRE_TESTS=1 (tests/conftest.py) turns every OTHER skip into a
+#     failure, so a missing optional dependency cannot quietly delete a test.
+#   * The number of substrate tests is CAPPED below. Marking another test
+#     `substrate` silently removes it from this job, so doing it has to be a
+#     visible edit to this file, not a decorator added in passing.
+#
+# The substrate tests run where the engine exists: locally (PYTHONPATH pointing
+# at a leviathan-engine build) and in Maneuver.Map, which vendors both.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Raise only together with marking a new test `substrate`, and say why.
+  SUBSTRATE_TEST_CAP: "23"
+
+jobs:
+  tests:
+    name: gossamer · py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install the package and every optional comparator
+        run: |
+          python -m pip install --upgrade pip
+          # torch from the CPU index first: the default Linux wheel is the CUDA
+          # build (~2 GB) and this runner has no GPU. `[all]` then finds it
+          # satisfied. The learning and MILP baselines are gated on these extras;
+          # without them their tests would not fail, they would disappear.
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -e ".[all]" pytest
+
+      - name: What this job does not cover
+        run: |
+          n=$(python -m pytest -q --collect-only -m substrate 2>/dev/null | grep -c '::' || true)
+          echo "substrate tests (need the compiled engine, run elsewhere): $n"
+          python -m pytest -q --collect-only -m substrate 2>/dev/null | grep '::' || true
+          if [ "$n" -gt "$SUBSTRATE_TEST_CAP" ]; then
+            echo "::error::$n substrate tests exceeds the cap of $SUBSTRATE_TEST_CAP. Marking a test substrate removes it from public CI; raise the cap in ci.yml deliberately if that is intended."
+            exit 1
+          fi
+
+      - name: Run the suite (a skip is a failure)
+        env:
+          ARBORIA_REQUIRE_TESTS: "1"
+        run: python -m pytest -q -rs -m "not substrate"
+
+      - name: The public benchmark CLI runs on the reference engine
+        run: gossamer-bench --scenarios rendezvous --baselines random --agents 40 --steps 30 --engine reference > /dev/null
