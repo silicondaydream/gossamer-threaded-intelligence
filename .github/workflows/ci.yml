@@ -36,6 +36,17 @@ env:
   SUBSTRATE_TEST_CAP: "23"
 
 jobs:
+  version:
+    # A PR that changes the package must bump setup.py, or it cannot be published.
+    name: version bump
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: .github/scripts/check_version_bump.sh "origin/${{ github.base_ref }}"
+
   tests:
     name: gossamer · py${{ matrix.python-version }}
     runs-on: ubuntu-latest
