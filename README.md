@@ -1,6 +1,8 @@
 Gossamer Threaded Intelligence
 ==============================
 
+[![CI](https://github.com/silicondaydream/gossamer-threaded-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/silicondaydream/gossamer-threaded-intelligence/actions/workflows/ci.yml)
+
 ## Overview
 
 Gossamer is Arboria Labs' policy and analysis library for large-scale,
@@ -105,6 +107,21 @@ feasibility at extreme scale.
 - From source (dev):
   - `pip install -r requirements.txt`
   - `pip install -e .`
+
+## Tests
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu   # CPU build
+pip install -e ".[all]" pytest
+ARBORIA_REQUIRE_TESTS=1 pytest -m "not substrate"   # what public CI runs
+gossamer-bench --engine reference                   # the benchmark, no compiled engine
+```
+
+`ARBORIA_REQUIRE_TESTS=1` turns any skip into a failure, so a missing optional
+dependency cannot quietly remove a test. Tests marked `substrate` need the
+compiled Leviathan engine (the benchmark's default substrate, which does not fall
+back); public CI deselects them by marker and caps how many there may be. With the
+engine built, `PYTHONPATH=<leviathan-engine>/build/src/python pytest` runs all of them.
 
 ## Core APIs and algorithms
 

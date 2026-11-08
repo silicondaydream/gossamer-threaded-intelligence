@@ -49,3 +49,14 @@ def pytest_collectreport(report):
         report.outcome = "failed"
         report.longrepr = _SKIP_IS_FAILURE.format(reason=report.longrepr)
     yield
+
+
+def pytest_configure(config):
+    # `substrate`: needs the COMPILED Leviathan engine (the benchmark's default
+    # substrate, which deliberately does not fall back to ReferenceEngine). The
+    # public CI cannot build it -- leviathan-engine is private -- so that job
+    # DESELECTS these by marker (`-m "not substrate"`) and says so in its log.
+    # Deselection is explicit and counted; it is not a skip, and every OTHER skip
+    # still fails the run under ARBORIA_REQUIRE_TESTS=1.
+    config.addinivalue_line(
+        "markers", "substrate: needs the compiled Leviathan engine (excluded from public CI)")
