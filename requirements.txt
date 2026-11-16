@@ -3,5 +3,5 @@ networkx
 pandas
 scipy
 scikit-learn
-sphinx>=4.0
+sphinx>=8.1.3
 pytest
