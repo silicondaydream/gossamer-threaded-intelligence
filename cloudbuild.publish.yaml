@@ -196,9 +196,29 @@ steps:
       - |
         set -euo pipefail
         pip install --no-cache-dir twine keyrings.google-artifactregistry-auth
-        # Note: Artifact Registry's PyPI endpoint does NOT support
-        # --skip-existing. Re-uploading an existing version returns 400; bump
-        # the version in setup.py instead of relying on idempotent upload.
+        # Artifact Registry's PyPI endpoint does NOT support --skip-existing:
+        # re-uploading an existing version returns 400. This trigger runs on
+        # every push to main, including merges that touch only CI, docs or
+        # packaging metadata, so first ask whether this version is already
+        # published, and if so whether it already ships THIS package code:
+        #   identical code  -> nothing to upload; succeed and say so.
+        #   different code  -> the stale-wheel trap (consumers pinned to this
+        #                      version would silently keep the old code): fail
+        #                      and demand a version bump.
+        WHEEL=$$(ls dist/*.whl)
+        VER=$$(basename "$$WHEEL" | cut -d- -f2)
+        mkdir -p /tmp/published
+        if pip download --no-deps --no-cache-dir --dest /tmp/published \
+             --index-url "https://$_REGION-python.pkg.dev/$PROJECT_ID/$_PY_REPO/simple/" \
+             "gossamer-threaded-intelligence==$$VER"; then
+          if python .github/scripts/same_package_code.py "$$WHEEL" /tmp/published/*.whl; then
+            echo "$$VER is already published with identical package code; nothing to upload."
+            exit 0
+          fi
+          echo "ERROR: $$VER is already published with DIFFERENT package code." >&2
+          echo "Bump the version in setup.py (the PR version guard should have required it)." >&2
+          exit 1
+        fi
         python -m twine upload --non-interactive dist/*
 
 images: []
