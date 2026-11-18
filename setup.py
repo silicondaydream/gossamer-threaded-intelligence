@@ -44,10 +44,14 @@ setup(
             "gossamer-bench=gossamer.benchmarks.cli:main",
         ],
     },
-    # The versions CI tests (3.11-3.13).
-    python_requires=">=3.11",
+    # 3.10 is the floor because every image that installs this runs 3.10: the
+    # publish build and the Maneuver.Map backend use python:3.10-slim, and the
+    # worker builds on leviathan-base (Ubuntu 22.04, Python 3.10). CI tests
+    # 3.10-3.13. Raising this means raising those images first.
+    python_requires=">=3.10",
     classifiers=[
         "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",
