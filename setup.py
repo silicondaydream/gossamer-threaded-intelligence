@@ -1,4 +1,8 @@
+from pathlib import Path
+
 from setuptools import setup, find_packages
+
+README = (Path(__file__).parent / "README.md").read_text(encoding="utf-8")
 
 setup(
     name="gossamer-threaded-intelligence",  # Distribution name (unique in index)
@@ -7,8 +11,16 @@ setup(
     # with maneuver-map/scripts/versions.env (check_versions.sh asserts it).
     version="0.13.2",
     description="Gossamer Threaded Intelligence: swarm coordination algorithms + swappable DCC primitives, a unified coordination-task/quality API, peer-state predictors, graph-based message-passing policies, information-theoretic + criticality metrics, a MARL toolkit, and the Arboria Swarm Benchmark.",
+    long_description=README,
+    long_description_content_type="text/markdown",
     author="Arboria Labs",
     license="MIT",
+    license_files=["LICENSE"],
+    url="https://www.arborialabs.com",
+    project_urls={
+        "Source": "https://github.com/silicondaydream/gossamer-threaded-intelligence",
+        "Research": "https://www.arborialabs.com/research",
+    },
     packages=find_packages(include=["gossamer", "gossamer.*"]),  # Import remains `gossamer`
     install_requires=[
         "numpy",
@@ -32,10 +44,14 @@ setup(
             "gossamer-bench=gossamer.benchmarks.cli:main",
         ],
     },
-    python_requires=">=3.8",
+    # The versions CI tests (3.11-3.13).
+    python_requires=">=3.11",
     classifiers=[
         "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Intended Audience :: Science/Research",
         "Operating System :: OS Independent",
     ],
 )

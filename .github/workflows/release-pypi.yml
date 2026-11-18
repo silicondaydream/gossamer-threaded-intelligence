@@ -1,0 +1,68 @@
+# Publish Gossamer to PyPI (or TestPyPI). Manual only, so a public release is
+# always a decision. The internal Artifact Registry publish (cloudbuild.publish.yaml)
+# is unchanged and separate.
+#
+# One-time setup by the owner:
+#   1. On pypi.org (and test.pypi.org), add a "trusted publisher" for the project
+#      `gossamer-threaded-intelligence`: owner silicondaydream, this repo,
+#      workflow release-pypi.yml, environment pypi (or testpypi). No token is stored.
+#   2. In this repo's Settings -> Environments, create `pypi` and `testpypi`
+#      (add yourself as a required reviewer on `pypi`).
+# Then: Actions -> Release to PyPI -> Run workflow -> choose the index.
+# PyPI, like Artifact Registry, refuses to re-upload a version: bump setup.py first.
+name: Release to PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      index:
+        description: "Where to publish"
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Build and check
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          python -m twine check --strict dist/*
+      - name: The wheel installs and runs outside the checkout
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install dist/*.whl
+          cd /tmp && /tmp/venv/bin/gossamer-bench --scenarios rendezvous --baselines random --agents 40 --steps 30 --engine reference > /dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.index }}
+    permissions:
+      id-token: write   # trusted publishing; no stored token
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to TestPyPI
+        if: inputs.index == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+      - name: Publish to PyPI
+        if: inputs.index == 'pypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
